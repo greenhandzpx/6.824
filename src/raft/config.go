@@ -440,6 +440,11 @@ func (cfg *config) checkOneLeader() int {
 				if term, leader := cfg.rafts[i].GetState(); leader {
 					leaders[term] = append(leaders[term], i)
 				}
+				//fmt.Print(" Term: ", cfg.rafts[i].currentTerm)
+				//fmt.Print(" Votefor: ", cfg.rafts[i].votedFor)
+				//fmt.Print(" State ", cfg.rafts[i].state)
+				//fmt.Print(" Me: ", cfg.rafts[i].me)
+				//fmt.Println()
 			}
 		}
 

@@ -55,18 +55,21 @@ func TestReElection2A(t *testing.T) {
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2A): election after network failure")
+	cfg.begin(fmt.Sprint(time.Now().UnixMilli()) +
+		" Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
+	fmt.Println(time.Now().UnixMilli(), "Line 65 check one leader")
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
+	fmt.Println(time.Now().UnixMilli(), "Line 71 check one leader")
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no new leader should
@@ -77,14 +80,17 @@ func TestReElection2A(t *testing.T) {
 
 	// check that the one connected server
 	// does not think it is the leader.
+	fmt.Println(time.Now().UnixMilli(), "Check no leader")
 	cfg.checkNoLeader()
 
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
+	fmt.Println(time.Now().UnixMilli(), "Line 86 check one leader")
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
+	fmt.Println(time.Now().UnixMilli(), "Line 91 check one leader")
 	cfg.checkOneLeader()
 
 	cfg.end()
@@ -95,8 +101,9 @@ func TestManyElections2A(t *testing.T) {
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2A): multiple elections")
+	cfg.begin(fmt.Sprint(time.Now().UnixMilli()) + " Test (2A): multiple elections")
 
+	fmt.Println(time.Now().UnixMilli(), "Line 106 Check for one leader")
 	cfg.checkOneLeader()
 
 	iters := 10
@@ -111,6 +118,7 @@ func TestManyElections2A(t *testing.T) {
 
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
+		fmt.Println(time.Now().UnixMilli(), "Line 120 Check for one leader")
 		cfg.checkOneLeader()
 
 		cfg.connect(i1)
@@ -118,6 +126,7 @@ func TestManyElections2A(t *testing.T) {
 		cfg.connect(i3)
 	}
 
+	fmt.Println(time.Now().UnixMilli(), "Line 128 Check for one leader")
 	cfg.checkOneLeader()
 
 	cfg.end()
