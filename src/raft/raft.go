@@ -877,11 +877,10 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 		if rf.votes > len(rf.peers)/2 {
 			// 超过半数就成为leader
 			rf.state = 2
-			//rf.votedFor = -1
 			rf.votes = 0
-			for i := 1; i < len(rf.nextIndex); i++ {
-				rf.nextIndex[i] = rf.startIndex + len(rf.log) + 2
-				rf.matchIndex[i] = 1
+			for i := 0; i < len(rf.nextIndex); i++ {
+				rf.nextIndex[i] = rf.startIndex + len(rf.log) + 1
+				rf.matchIndex[i] = 0
 			}
 			DPrintf("%v becomes leader", rf.me)
 			//fmt.Println(time.Now().UnixMilli(), rf.me, "becomes leader")
@@ -897,23 +896,24 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) election() {
 
 	rf.mu.Lock()
-	rf.votes = 2
+	rf.votes = 1
 	args := RequestVoteArgs{
 		Term:        rf.currentTerm,
 		CandidateId: rf.me,
 	}
 	args.LastLogIndex = len(rf.log) + rf.startIndex
-	if len(rf.log) == 1 {
+	if len(rf.log) == 0 {
 		args.LastLogTerm = rf.lastIncludedTerm
 	} else {
 		args.LastLogTerm = rf.log[len(rf.log)-1].Term
 	}
 	rf.mu.Unlock()
 
-	for k := rf.me + 2; k%len(rf.peers) != rf.me%len(rf.peers); k++ {
+	for i := 0; i < len(rf.peers); i++ {
 		// 遍历其他server
-		i := k % len(rf.peers)
-
+		if i == rf.me {
+			continue
+		}
 		// 每次发送rpc前先查看是否已有leader修改了自己的lastTime
 		rf.mu.Lock()
 		if rf.killed() {
@@ -951,7 +951,7 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 		//ms := 31
 		//time.Sleep(time.Duration(ms) * time.Millisecond)
-		time.Sleep(31 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 
 		rf.mu.Lock()
 		if rf.state == 2 {
@@ -964,10 +964,10 @@ func (rf *Raft) ticker() {
 
 			DPrintf("Id: %v timeout, start to be candidate", rf.me)
 			//fmt.Println(time.Now().UnixMilli(), "timeout ", "me: ", rf.me)
-			rf.leaderId = 0
+			rf.leaderId = -1
 			rf.lastTime = time.Now().UnixMilli()
 			// 每次tick过后reset一下timeout
-			rf.electionTimeout = 501 + rand.Int63()%500
+			rf.electionTimeout = 400 + rand.Int63()%400
 			rf.state = 1
 			rf.currentTerm++
 			rf.votedFor = rf.me
@@ -1006,11 +1006,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// Your initialization code here (3A, 2B, 2C).
 	if rf.readPersist(rf.persister.ReadRaftState()) == 2 {
 		// 说明没有存放数据
-		rf.currentTerm = 1
-		rf.votedFor = 0
-		rf.startIndex = 1
-		rf.lastIncludedIndex = 1
-		rf.lastIncludedTerm = 0
+		rf.currentTerm = 0
+		rf.votedFor = -1
+		rf.startIndex = 0
+		rf.lastIncludedIndex = 0
+		rf.lastIncludedTerm = -1
 	}
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
@@ -1019,16 +1019,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//	Index: 1,
 	//	Term:  1,
 	//})
-	rf.commitIndex = 1
-	rf.lastApplied = 1
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 	rf.lastTime = time.Now().UnixMilli()
 	rf.state = 0
 
 	// 每个server的timeout在401到800ms之间(待定）
-	rf.electionTimeout = 401 + rand.Int63()%300
-	rf.leaderId = 0
-	rf.votes = 1
-	rf.alives = 1
+	rf.electionTimeout = 400 + rand.Int63()%300
+	rf.leaderId = -1
+	rf.votes = 0
+	rf.alives = 0
 
 	rf.applyCh = applyCh
 
