@@ -219,18 +219,6 @@ func (rf *Raft) saveStateAndSnapshot(snapshot []byte) {
 	rf.persister.SaveStateAndSnapshot(data, snapshot)
 }
 
-//func (rf *Raft) readSnapshot(snapshot []byte) []byte {
-//	r := bytes.NewBuffer(snapshot)
-//	d := labgob.NewDecoder(r)
-//	var res []byte
-//	if err := d.Decode(&res); err != nil {
-//		DPrintf("Decoder snapshot error! in %v", rf.me)
-//		return nil
-//	}
-//	DPrintf("%v reads snapshot", rf.me)
-//	return res
-//}
-
 // CondInstallSnapshot
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
@@ -283,6 +271,12 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		return
 	}
 
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.state = 0
+		rf.persist()
+	}
 	applymsg := ApplyMsg{
 		CommandValid: false,
 
@@ -447,10 +441,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		return
 	}
-	if rf.votedFor == args.CandidateId {
-		// 说明是第二次遍历到这个follower了
-		rf.votedFor = -1
-	}
+	//if rf.votedFor == args.CandidateId {
+	//	// 说明是第二次遍历到这个follower了
+	//	rf.votedFor = -1
+	//}
 	if (len(rf.log) == 0 && args.LastLogTerm < rf.lastIncludedTerm) ||
 		(len(rf.log) > 0 && args.LastLogTerm < rf.log[len(rf.log)-1].Term) {
 		// 取出rf的log中最后一条entry的term
@@ -510,16 +504,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 
-	if rf.votedFor != -1 {
+	if rf.currentTerm < args.Term {
+		rf.state = 0 // 设置为follower
+		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		rf.persist()
-	}
-	if rf.currentTerm < args.Term {
-		rf.currentTerm = args.Term
-		rf.persist()
-	}
-	if rf.state != 0 {
-		rf.state = 0 // 设置为follower
 	}
 	if rf.leaderId != args.LeaderId {
 		rf.leaderId = args.LeaderId
@@ -792,12 +781,6 @@ func (rf *Raft) sendCommittedEntry() {
 			rf.lastApplied = rf.startIndex
 		}
 		if rf.lastApplied < rf.commitIndex {
-			//if rf.lastApplied < rf.startIndex {
-			//	// 说明快照已经apply到state machine了
-			//	rf.lastApplied = rf.startIndex
-			//	rf.mu.Unlock()
-			//	continue
-			//}
 			// 先拷贝一份，防止打快照截掉日志
 			log := rf.log[rf.lastApplied-rf.startIndex : rf.commitIndex-rf.startIndex]
 			rf.mu.Unlock()
@@ -942,14 +925,9 @@ func (rf *Raft) election() {
 			rf.mu.Unlock()
 			return
 		}
-		if rf.leaderId != -1 || rf.state == 0 {
-			//if time.Now().UnixMilli()-rf.lastTime <= rf.electionTimeout {
+		if rf.state == 0 {
 			// 说明此时已有leader
 			DPrintf("Id: %v (small line)There exists a leader.", rf.me)
-			//fmt.Println(time.Now().UnixMilli(), "Id:", rf.me, "(small line)There exists a leader.")
-			rf.state = 0
-			rf.votedFor = -1
-			rf.persist()
 			rf.mu.Unlock()
 			break
 		}
@@ -957,7 +935,6 @@ func (rf *Raft) election() {
 
 		reply := RequestVoteReply{}
 
-		//DPrintf("term: %v, Id: %v start to send vote to Id: %v", rf.currentTerm, rf.me, i)
 		//fmt.Println(time.Now().UnixMilli(), "id:", rf.me, "starts to send vote to id:", i)
 		go rf.sendRequestVote(i, &args, &reply)
 
@@ -1054,9 +1031,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.alives = 0
 
 	rf.applyCh = applyCh
-
-	//rf.readPersist(persister.ReadRaftState())
-	//rf.readSnapshot(persister.ReadSnapshot())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
