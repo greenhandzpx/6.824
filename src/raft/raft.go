@@ -925,7 +925,7 @@ func (rf *Raft) election() {
 			rf.mu.Unlock()
 			return
 		}
-		if rf.state == 1 {
+		if rf.state == 0 {
 			// 说明此时已有leader
 			DPrintf("Id: %v (small line)There exists a leader.", rf.me)
 			rf.mu.Unlock()
@@ -943,7 +943,7 @@ func (rf *Raft) election() {
 }
 
 // The ticker go routine starts a new election if this peer hasn't received
-// heartsbeats recently.
+// heartbeats recently.
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		// Your code here to check if a leader election should
@@ -954,7 +954,7 @@ func (rf *Raft) ticker() {
 		time.Sleep(31 * time.Millisecond)
 
 		rf.mu.Lock()
-		if rf.state == 3 {
+		if rf.state == 2 {
 			// 成为leader的话就直接跳过
 			rf.mu.Unlock()
 			continue
@@ -968,7 +968,7 @@ func (rf *Raft) ticker() {
 			rf.lastTime = time.Now().UnixMilli()
 			// 每次tick过后reset一下timeout
 			rf.electionTimeout = 501 + rand.Int63()%500
-			rf.state = 2
+			rf.state = 1
 			rf.currentTerm++
 			rf.votedFor = rf.me
 			rf.persist()
@@ -1022,7 +1022,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.commitIndex = 1
 	rf.lastApplied = 1
 	rf.lastTime = time.Now().UnixMilli()
-	rf.state = 1
+	rf.state = 0
 
 	// 每个server的timeout在401到800ms之间(待定）
 	rf.electionTimeout = 401 + rand.Int63()%300
