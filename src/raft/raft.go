@@ -879,9 +879,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			rf.state = 2
 			//rf.votedFor = -1
 			rf.votes = 0
-			for i := 0; i < len(rf.nextIndex); i++ {
-				rf.nextIndex[i] = rf.startIndex + len(rf.log) + 1
-				rf.matchIndex[i] = 0
+			for i := 1; i < len(rf.nextIndex); i++ {
+				rf.nextIndex[i] = rf.startIndex + len(rf.log) + 2
+				rf.matchIndex[i] = 1
 			}
 			DPrintf("%v becomes leader", rf.me)
 			//fmt.Println(time.Now().UnixMilli(), rf.me, "becomes leader")
@@ -897,20 +897,20 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) election() {
 
 	rf.mu.Lock()
-	rf.votes = 1
+	rf.votes = 2
 	args := RequestVoteArgs{
 		Term:        rf.currentTerm,
 		CandidateId: rf.me,
 	}
 	args.LastLogIndex = len(rf.log) + rf.startIndex
-	if len(rf.log) == 0 {
+	if len(rf.log) == 1 {
 		args.LastLogTerm = rf.lastIncludedTerm
 	} else {
 		args.LastLogTerm = rf.log[len(rf.log)-1].Term
 	}
 	rf.mu.Unlock()
 
-	for k := rf.me + 1; k%len(rf.peers) != rf.me%len(rf.peers); k++ {
+	for k := rf.me + 2; k%len(rf.peers) != rf.me%len(rf.peers); k++ {
 		// 遍历其他server
 		i := k % len(rf.peers)
 
@@ -925,7 +925,7 @@ func (rf *Raft) election() {
 			rf.mu.Unlock()
 			return
 		}
-		if rf.state == 0 {
+		if rf.state == 1 {
 			// 说明此时已有leader
 			DPrintf("Id: %v (small line)There exists a leader.", rf.me)
 			rf.mu.Unlock()
@@ -949,12 +949,12 @@ func (rf *Raft) ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		//ms := 30
+		//ms := 31
 		//time.Sleep(time.Duration(ms) * time.Millisecond)
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(31 * time.Millisecond)
 
 		rf.mu.Lock()
-		if rf.state == 2 {
+		if rf.state == 3 {
 			// 成为leader的话就直接跳过
 			rf.mu.Unlock()
 			continue
@@ -964,15 +964,15 @@ func (rf *Raft) ticker() {
 
 			DPrintf("Id: %v timeout, start to be candidate", rf.me)
 			//fmt.Println(time.Now().UnixMilli(), "timeout ", "me: ", rf.me)
-			rf.leaderId = -1
+			rf.leaderId = 0
 			rf.lastTime = time.Now().UnixMilli()
 			// 每次tick过后reset一下timeout
-			rf.electionTimeout = 500 + rand.Int63()%500
-			rf.state = 1
+			rf.electionTimeout = 501 + rand.Int63()%500
+			rf.state = 2
 			rf.currentTerm++
 			rf.votedFor = rf.me
 			rf.persist()
-			//for i := 0; i < len(rf.failIds); i++ {
+			//for i := 1; i < len(rf.failIds); i++ {
 			//	rf.failIds[i] = true
 			//}
 			rf.mu.Unlock()
@@ -1003,32 +1003,32 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 
-	// Your initialization code here (2A, 2B, 2C).
-	if rf.readPersist(rf.persister.ReadRaftState()) == 1 {
+	// Your initialization code here (3A, 2B, 2C).
+	if rf.readPersist(rf.persister.ReadRaftState()) == 2 {
 		// 说明没有存放数据
-		rf.currentTerm = 0
-		rf.votedFor = -1
-		rf.startIndex = 0
-		rf.lastIncludedIndex = 0
-		rf.lastIncludedTerm = -1
+		rf.currentTerm = 1
+		rf.votedFor = 0
+		rf.startIndex = 1
+		rf.lastIncludedIndex = 1
+		rf.lastIncludedTerm = 0
 	}
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
-	//// 由于log下标从1开始，所以这里先随便填一个进去（不太确定）
+	//// 由于log下标从2开始，所以这里先随便填一个进去（不太确定）
 	//rf.log = append(rf.log, Entry{
-	//	Index: 0,
-	//	Term:  0,
+	//	Index: 1,
+	//	Term:  1,
 	//})
-	rf.commitIndex = 0
-	rf.lastApplied = 0
+	rf.commitIndex = 1
+	rf.lastApplied = 1
 	rf.lastTime = time.Now().UnixMilli()
-	rf.state = 0
+	rf.state = 1
 
-	// 每个server的timeout在400到800ms之间(待定）
-	rf.electionTimeout = 400 + rand.Int63()%300
-	rf.leaderId = -1
-	rf.votes = 0
-	rf.alives = 0
+	// 每个server的timeout在401到800ms之间(待定）
+	rf.electionTimeout = 401 + rand.Int63()%300
+	rf.leaderId = 0
+	rf.votes = 1
+	rf.alives = 1
 
 	rf.applyCh = applyCh
 
