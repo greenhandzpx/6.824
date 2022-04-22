@@ -1,13 +1,21 @@
 package kvraft
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"sync"
+)
 import "crypto/rand"
 import "math/big"
 
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	token      int64 // 每个请求的唯一标识
+	mu         sync.Mutex
+	lastLeader int   // 上一个请求的leader
+	uuid       int64 // 每个clerk的唯一标识
 }
 
 func nrand() int64 {
@@ -21,10 +29,18 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.lastLeader = 0
+	ck.uuid = nrand()
+	ck.token = ck.uuid
 	return ck
 }
 
 //
+//func (ck *Clerk) sendGet(args *GetArgs, reply *GetReply) {
+//	ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+//}
+
+// Get
 // fetch the current value for a key.
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
@@ -39,7 +55,30 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Get(key string) string {
 
 	// You will have to modify this function.
-	return ""
+	ck.mu.Lock()
+	args := GetArgs{
+		Key:   key,
+		Token: ck.token,
+	}
+	DPrintf("client send a get request, uuid: %v", args.Token)
+	ck.token++
+	ck.mu.Unlock()
+	for k := ck.lastLeader; ; k++ {
+		i := k % len(ck.servers)
+		reply := GetReply{}
+		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+		if !ok {
+			continue
+		}
+		if reply.Err == ErrWrongLeader {
+			continue
+		}
+		ck.mu.Lock()
+		ck.lastLeader = reply.LeaderId
+		ck.mu.Unlock()
+		return reply.Value
+	}
+
 }
 
 //
@@ -54,6 +93,32 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	args := PutAppendArgs{
+		Key:   key,
+		Value: value,
+		Op:    op,
+	}
+	ck.mu.Lock()
+	args.Token = ck.token
+	ck.token++
+	DPrintf("client send a put or append request, key:%v, value:%v, uuid:%v", key, value, args.Token)
+	ck.mu.Unlock()
+	for k := ck.lastLeader; ; k++ {
+		i := k % len(ck.servers)
+		reply := PutAppendReply{}
+		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+		if !ok {
+			continue
+		}
+		if reply.Err == ErrWrongLeader {
+			continue
+		}
+		ck.mu.Lock()
+		ck.lastLeader = reply.LeaderId
+		ck.mu.Unlock()
+		return
+	}
+
 }
 
 func (ck *Clerk) Put(key string, value string) {
