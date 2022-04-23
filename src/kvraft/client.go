@@ -3,6 +3,7 @@ package kvraft
 import (
 	"6.824/labrpc"
 	"sync"
+	"time"
 )
 import "crypto/rand"
 import "math/big"
@@ -36,9 +37,10 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 }
 
 //
-//func (ck *Clerk) sendGet(args *GetArgs, reply *GetReply) {
-//	ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
-//}
+func (ck *Clerk) sendGet(server int, args *GetArgs, reply *GetReply) bool {
+	ok := ck.servers[server].Call("KVServer.Get", &args, &reply)
+	return ok
+}
 
 // Get
 // fetch the current value for a key.
@@ -61,6 +63,7 @@ func (ck *Clerk) Get(key string) string {
 		Token: ck.token,
 	}
 	DPrintf("client send a get request, uuid: %v", args.Token)
+	DPrintf("leader %v", ck.lastLeader)
 	ck.token++
 	ck.mu.Unlock()
 	for k := ck.lastLeader; ; k++ {
@@ -71,10 +74,14 @@ func (ck *Clerk) Get(key string) string {
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
+			ck.mu.Lock()
+			DPrintf("wrong leader %v", ck.lastLeader)
+			ck.mu.Unlock()
 			continue
 		}
 		ck.mu.Lock()
-		ck.lastLeader = reply.LeaderId
+		ck.lastLeader = i
+		//ck.lastLeader = reply.LeaderId
 		ck.mu.Unlock()
 		return reply.Value
 	}
@@ -102,6 +109,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Token = ck.token
 	ck.token++
 	DPrintf("client send a put or append request, key:%v, value:%v, uuid:%v", key, value, args.Token)
+	DPrintf("leader %v", ck.lastLeader)
+	startTime := time.Now().UnixMilli()
 	ck.mu.Unlock()
 	for k := ck.lastLeader; ; k++ {
 		i := k % len(ck.servers)
@@ -111,10 +120,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
+			ck.mu.Lock()
+			DPrintf("wrong leader %v", ck.lastLeader)
+			ck.mu.Unlock()
 			continue
 		}
 		ck.mu.Lock()
-		ck.lastLeader = reply.LeaderId
+		ck.lastLeader = i
+		DPrintf("last leader is %v, time pass: %v", ck.lastLeader, time.Now().UnixMilli()-startTime)
 		ck.mu.Unlock()
 		return
 	}

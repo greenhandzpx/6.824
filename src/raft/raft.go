@@ -728,7 +728,7 @@ func (rf *Raft) heartbeat() {
 			go rf.sendAppendEntries(i, &args, &reply)
 		}
 
-		time.Sleep(80 * time.Millisecond)
+		time.Sleep(6 * time.Millisecond)
 
 		// 遍历所有有可能可以commit的entry
 		rf.mu.Lock()
@@ -767,7 +767,7 @@ func (rf *Raft) heartbeat() {
 
 func (rf *Raft) sendCommittedEntry() {
 	for rf.killed() == false {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(4 * time.Millisecond)
 
 		rf.mu.Lock()
 
@@ -951,7 +951,7 @@ func (rf *Raft) ticker() {
 		// time.Sleep().
 		//ms := 31
 		//time.Sleep(time.Duration(ms) * time.Millisecond)
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 
 		rf.mu.Lock()
 		if rf.state == 2 {

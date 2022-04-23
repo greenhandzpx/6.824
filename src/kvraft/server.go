@@ -166,7 +166,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	reply.Err = ErrWrongLeader
 	index, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
-		reply.Err = ErrWrongLeader
 		return
 	}
 	reply.LeaderId = kv.me
@@ -182,6 +181,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	for {
 		if time.Now().UnixMilli()-startTime > 1000 {
 			// 大于3秒则返回
+			DPrintf("time out ")
 			return
 		}
 		kv.mu.Lock()
@@ -204,6 +204,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	rpc_start := time.Now().UnixMilli()
 	op := Op{
 		Key:   args.Key,
 		Value: args.Value,
@@ -231,6 +232,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	startTime := time.Now().UnixMilli()
 	for {
 		if time.Now().UnixMilli()-startTime > 1000 {
+			DPrintf("time out ")
 			return
 		}
 		kv.mu.Lock()
@@ -241,11 +243,12 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 				return
 			}
 			reply.Err = kv.records[index].Response.Err
+			DPrintf("rpc time pass: %v", time.Now().UnixMilli()-rpc_start)
 			kv.mu.Unlock()
 			return
 		}
 		kv.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
