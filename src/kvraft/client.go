@@ -3,7 +3,6 @@ package kvraft
 import (
 	"6.824/labrpc"
 	"sync"
-	"time"
 )
 import "crypto/rand"
 import "math/big"
@@ -13,10 +12,10 @@ const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	token      int64 // 每个请求的唯一标识
 	mu         sync.Mutex
 	lastLeader int   // 上一个请求的leader
 	uuid       int64 // 每个clerk的唯一标识
+	count      int   // 对请求进行计数
 }
 
 func nrand() int64 {
@@ -32,7 +31,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	// You'll have to add code here.
 	ck.lastLeader = 0
 	ck.uuid = nrand()
-	ck.token = ck.uuid
+	ck.count = 0
 	return ck
 }
 
@@ -59,12 +58,10 @@ func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
 	ck.mu.Lock()
 	args := GetArgs{
-		Key:   key,
-		Token: ck.token,
+		Key: key,
 	}
 	DPrintf("client send a get request, uuid: %v", args.Token)
 	DPrintf("leader %v", ck.lastLeader)
-	ck.token++
 	ck.mu.Unlock()
 	for k := ck.lastLeader; ; k++ {
 		i := k % len(ck.servers)
@@ -104,13 +101,13 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		Key:   key,
 		Value: value,
 		Op:    op,
+		Uuid:  ck.uuid,
 	}
 	ck.mu.Lock()
-	args.Token = ck.token
-	ck.token++
-	DPrintf("client send a put or append request, key:%v, value:%v, uuid:%v", key, value, args.Token)
+	args.Count = ck.count
+	ck.count++
 	DPrintf("leader %v", ck.lastLeader)
-	startTime := time.Now().UnixMilli()
+	//startTime := time.Now().UnixMilli()
 	ck.mu.Unlock()
 	for k := ck.lastLeader; ; k++ {
 		i := k % len(ck.servers)
@@ -121,13 +118,13 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		}
 		if reply.Err == ErrWrongLeader {
 			ck.mu.Lock()
-			DPrintf("wrong leader %v", ck.lastLeader)
+			//DPrintf("wrong leader %v", ck.lastLeader)
 			ck.mu.Unlock()
 			continue
 		}
 		ck.mu.Lock()
 		ck.lastLeader = i
-		DPrintf("last leader is %v, time pass: %v", ck.lastLeader, time.Now().UnixMilli()-startTime)
+		//DPrintf("last leader is %v, time pass: %v", ck.lastLeader, time.Now().UnixMilli()-startTime)
 		ck.mu.Unlock()
 		return
 	}

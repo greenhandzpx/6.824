@@ -4,7 +4,6 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongLeader = "ErrWrongLeader"
-	NotDefined     = "NotDefined"
 )
 
 type Err string
@@ -17,7 +16,10 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Token int64
+	// 每个客户的唯一标识
+	Uuid int64
+	// 每个客户发送的请求序号
+	Count int
 }
 
 type PutAppendReply struct {

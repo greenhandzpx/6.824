@@ -1,0 +1,43 @@
+=== RUN   TestSnapshotRPC3B
+Test: InstallSnapshot RPC (3B) ...
+  ... Passed --   3.2  3  4648   63
+--- PASS: TestSnapshotRPC3B (3.16s)
+=== RUN   TestSnapshotSize3B
+Test: snapshot size is reasonable (3B) ...
+  ... Passed --  14.7  3  8841  800
+--- PASS: TestSnapshotSize3B (14.66s)
+=== RUN   TestSpeed3B
+Test: ops complete fast enough (3B) ...
+  ... Passed --  16.3  3 10032    0
+--- PASS: TestSpeed3B (16.29s)
+=== RUN   TestSnapshotRecover3B
+Test: restarts, snapshots, one client (3B) ...
+  ... Passed --  19.4  5 23396  811
+--- PASS: TestSnapshotRecover3B (19.41s)
+=== RUN   TestSnapshotRecoverManyClients3B
+Test: restarts, snapshots, many clients (3B) ...
+  ... Passed --  21.0  5 43852 14147
+--- PASS: TestSnapshotRecoverManyClients3B (20.98s)
+=== RUN   TestSnapshotUnreliable3B
+Test: unreliable net, snapshots, many clients (3B) ...
+  ... Passed --  16.1  5 12382 1300
+--- PASS: TestSnapshotUnreliable3B (16.13s)
+=== RUN   TestSnapshotUnreliableRecover3B
+Test: unreliable net, restarts, snapshots, many clients (3B) ...
+  ... Passed --  20.8  5 13325 1273
+--- PASS: TestSnapshotUnreliableRecover3B (20.82s)
+=== RUN   TestSnapshotUnreliableRecoverConcurrentPartition3B
+Test: unreliable net, restarts, partitions, snapshots, many clients (3B) ...
+    test_test.go:293: get wrong value, key 3, wanted:
+        x 3 0 yx 3 1 yx 3 2 yx 3 3 yx 3 4 yx 3 5 yx 3 6 yx 3 7 yx 3 8 yx 3 9 yx 3 10 yx 3 11 yx 3 12 yx 3 13 yx 3 14 yx 3 15 yx 3 16 yx 3 17 yx 3 18 yx 3 19 yx 3 20 yx 3 21 yx 3 22 yx 3 23 yx 3 24 yx 3 25 yx 3 26 yx 3 27 yx 3 28 yx 3 29 yx 3 30 yx 3 31 yx 3 32 yx 3 33 yx 3 34 yx 3 35 y
+        , got
+        x 3 0 yx 3 1 yx 3 2 yx 3 3 yx 3 4 yx 3 5 yx 3 6 yx 3 7 yx 3 8 yx 3 9 yx 3 10 yx 3 11 yx 3 12 yx 3 13 yx 3 14 yx 3 15 yx 3 16 yx 3 17 yx 3 18 yx 3 19 yx 3 20 yx 3 21 yx 3 22 yx 3 23 yx 3 24 yx 3 25 yx 3 26 yx 3 27 yx 3 28 y
+    test_test.go:126: failure
+info: wrote history visualization to /tmp/3999949450.html
+    test_test.go:382: history is not linearizable
+--- FAIL: TestSnapshotUnreliableRecoverConcurrentPartition3B (27.36s)
+=== RUN   TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B
+Test: unreliable net, restarts, partitions, snapshots, random keys, many clients (3B) ...
+  ... Passed --  29.6  7 32686 2447
+--- PASS: TestSnapshotUnreliableRecoverConcurrentPartitionLinearizable3B (29.57s)
+FAIL

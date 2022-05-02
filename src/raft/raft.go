@@ -104,6 +104,12 @@ type Raft struct {
 
 }
 
+// GetPersister
+// get the persister of raft
+func (rf *Raft) GetPersister() *Persister {
+	return rf.persister
+}
+
 // GetState
 // return currentTerm and whether this server
 // believes it is the leader.
@@ -158,19 +164,7 @@ func (rf *Raft) readPersist(data []byte) int {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return 1
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+
 	r := bytes.NewBuffer(data)
 	d := labgob.NewDecoder(r)
 	var currentTerm int
@@ -197,6 +191,11 @@ func (rf *Raft) readPersist(data []byte) int {
 	if err := d.Decode(&log); err != nil {
 		DPrintf("Decode error!")
 		return -1
+	}
+
+	if rf.startIndex >= startIndex {
+		DPrintf("outdated persist state in %v", rf.me)
+		return 1
 	}
 	rf.currentTerm = currentTerm
 	rf.votedFor = votedFor
@@ -241,6 +240,14 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if index <= rf.startIndex {
+		DPrintf("index %v is smaller than startIndex %v", index, rf.startIndex)
+		return
+	}
+	if index-rf.startIndex > len(rf.log) {
+		DPrintf("%v log too short", rf.me)
+		return
+	}
 	rf.lastIncludedTerm = rf.log[index-rf.startIndex-1].Term
 	rf.lastIncludedIndex = rf.log[index-rf.startIndex-1].Index
 	rf.log = rf.log[index-rf.startIndex:]
@@ -556,6 +563,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.persist()
 			continue
 		}
+		if entry.Index-rf.startIndex > len(rf.log) {
+			// args里的entry的index-startIndex大于所有log的总长度
+			continue
+		}
 		if rf.log[entry.Index-1-rf.startIndex].Term != entry.Term {
 			// 遇到冲突的entry
 			flag = true
@@ -740,6 +751,9 @@ func (rf *Raft) heartbeat() {
 						count++
 					}
 				}
+				if index <= rf.startIndex {
+					break
+				}
 				if count > len(rf.peers)/2 && rf.log[index-1-rf.startIndex].Term == rf.currentTerm {
 					// 满足条件的entry即可提交给上层
 					// 说明commitIndex可以修改了
@@ -781,6 +795,10 @@ func (rf *Raft) sendCommittedEntry() {
 			rf.lastApplied = rf.startIndex
 		}
 		if rf.lastApplied < rf.commitIndex {
+			if rf.lastApplied-rf.startIndex < 0 || rf.commitIndex-rf.startIndex > len(rf.log) {
+				rf.mu.Unlock()
+				continue
+			}
 			// 先拷贝一份，防止打快照截掉日志
 			log := rf.log[rf.lastApplied-rf.startIndex : rf.commitIndex-rf.startIndex]
 			rf.mu.Unlock()
@@ -1004,7 +1022,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (3A, 2B, 2C).
-	if rf.readPersist(rf.persister.ReadRaftState()) == 2 {
+	rf.startIndex = 0
+	if rf.readPersist(rf.persister.ReadRaftState()) == 1 {
 		// 说明没有存放数据
 		rf.currentTerm = 0
 		rf.votedFor = -1
@@ -1024,7 +1043,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.lastTime = time.Now().UnixMilli()
 	rf.state = 0
 
-	// 每个server的timeout在401到800ms之间(待定）
+	// 每个server的timeout在400到800ms之间(待定）
 	rf.electionTimeout = 400 + rand.Int63()%300
 	rf.leaderId = -1
 	rf.votes = 0
