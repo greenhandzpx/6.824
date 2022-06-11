@@ -72,7 +72,7 @@ func (ck *Clerk) Get(key string) string {
 		}
 		if reply.Err == ErrWrongLeader {
 			ck.mu.Lock()
-			DPrintf("wrong leader %v", ck.lastLeader)
+			DPrintf("wrong leader %v", i)
 			ck.mu.Unlock()
 			continue
 		}
@@ -106,7 +106,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.mu.Lock()
 	args.Count = ck.count
 	ck.count++
-	DPrintf("client %v send a put or append request", ck.uuid)
+	DPrintf("client %v send a put or append request(k:%v v:%v)",
+		ck.uuid, key, value)
 	DPrintf("leader %v", ck.lastLeader)
 	//startTime := time.Now().UnixMilli()
 	ck.mu.Unlock()
@@ -119,7 +120,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
-			DPrintf("wrong leader")
+			DPrintf("wrong leader %v", i)
 			//DPrintf("wrong leader %v", ck.lastLeader)
 			continue
 		}
