@@ -27,12 +27,14 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 type Op struct {
-	Type  int
-	Key   string
-	Value string
-	Uuid  int64 // 每个客户的唯一id
-	Count int
+	Type    int
+	Key     string
+	Value   string
+	Uuid    int64 // 每个客户的唯一id
+	Count   int
+	ReplyCh chan OpReply // 接收server的回复
 }
+
 type OpReply struct {
 	Type  int
 	Value string
@@ -41,7 +43,7 @@ type OpReply struct {
 
 type OpMsg struct {
 	Request  Op
-	Response OpReply
+	Response chan OpReply // every entry keeps a chan for receiving data
 	Done     bool
 }
 
@@ -60,13 +62,144 @@ type KVServer struct {
 
 	// 键值集合
 	kvs map[string]string
-	// 相当于log，记录每一个客户端发来的entry
-	records map[int]OpMsg
+
+	//// 相当于log，记录每一个客户端发来的entry
+	//records map[int]OpMsg
+
 	// 存每一个客户的最新请求的id，防止重复
 	ids map[int64]int
 	// 最后一个已经执行的请求的index
 	// 注：kv.lastApplied <= kv.rf.lastApplied
 	lastApplied int
+}
+
+func (kv *KVServer) handleGetReq(op Op, commandIndex int) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	reply := OpReply{
+		Type: GET,
+	}
+	if commandIndex <= kv.lastApplied {
+		DPrintf("outdated command in %v", kv.me)
+		return
+	}
+	//if _, exists := kv.ids[op.Uuid]; !exists {
+	//	kv.ids[op.Uuid] = void{}
+	//}
+	value, ok := kv.kvs[op.Key]
+	if ok {
+		reply.Err = OK
+		reply.Value = value
+	} else {
+		DPrintf("No value for key %v", op.Key)
+		reply.Err = ErrNoKey
+		reply.Value = ""
+	}
+
+	go func() {
+		select {
+		case op.ReplyCh <- reply:
+			DPrintf("send a get reply, %v", commandIndex)
+			kv.mu.Lock()
+			kv.lastApplied = commandIndex
+			kv.mu.Unlock()
+		case <-time.After(500 * time.Millisecond):
+			return
+		}
+	}()
+
+	//kv.records[commandMsg.CommandIndex-1].Response <- reply
+	//kv.records[commandMsg.CommandIndex-1] = OpMsg{
+	//	Request:  op,
+	//	Response: reply,
+	//	Done:     true,
+	//}
+}
+
+func (kv *KVServer) handleAppendReq(op Op, commandIndex int) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	reply := OpReply{
+		Type: APPEND,
+	}
+
+	if commandIndex <= kv.lastApplied {
+		DPrintf("outdated command in %v", kv.me)
+		return
+	}
+	if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
+		DPrintf("count %v already exists", op.Count)
+		reply.Err = OK
+	} else {
+		kv.ids[op.Uuid] = op.Count
+		DPrintf("%v add key:%v value:%v", kv.me, op.Key, op.Value)
+		_, ok := kv.kvs[op.Key]
+		if ok {
+			reply.Err = OK
+			kv.kvs[op.Key] += op.Value
+		} else {
+			reply.Err = ErrNoKey
+			kv.kvs[op.Key] = op.Value
+		}
+	}
+	//if _, exists := kv.ids[op.Uuid]; exists {
+	//	DPrintf("uuid %v already exists", op.Uuid)
+	//} else {
+	//	kv.ids[op.Uuid] = void{}
+	go func() {
+		select {
+		case op.ReplyCh <- reply:
+			DPrintf("send a append reply %v", commandIndex)
+			kv.mu.Lock()
+			kv.lastApplied = commandIndex
+			kv.mu.Unlock()
+		case <-time.After(500 * time.Millisecond):
+			return
+		}
+	}()
+	//kv.records[commandMsg.CommandIndex-1] = OpMsg{
+	//	Request:  op,
+	//	Response: reply,
+	//	Done:     true,
+	//}
+}
+
+func (kv *KVServer) handlePutReq(op Op, commandIndex int) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	reply := OpReply{
+		Type: PUT,
+		Err:  OK,
+	}
+
+	if commandIndex <= kv.lastApplied {
+		DPrintf("outdated command in %v", kv.me)
+		return
+	}
+
+	if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
+		DPrintf("count %v already exists", op.Count)
+	} else {
+		kv.ids[op.Uuid] = op.Count
+		DPrintf("%v add key:%v value:%v", kv.me, op.Key, op.Value)
+		kv.ids[op.Uuid] = op.Count
+		kv.kvs[op.Key] = op.Value
+	}
+
+	go func() {
+		select {
+		case op.ReplyCh <- reply:
+			DPrintf("send a put reply %v", commandIndex)
+			kv.mu.Lock()
+			kv.lastApplied = commandIndex
+			kv.mu.Unlock()
+		case <-time.After(500 * time.Millisecond):
+			return
+		}
+	}()
 }
 
 func (kv *KVServer) checkCh() {
@@ -76,105 +209,17 @@ func (kv *KVServer) checkCh() {
 		//DPrintf("%v got one apply msg", kv.me)
 		if commandMsg.CommandValid {
 			// 如果是操作键值对的请求
-			DPrintf("%v got a request(index:%v)", kv.me, commandMsg.CommandIndex)
+			//DPrintf("%v got a request(index:%v)", kv.me, commandMsg.CommandIndex)
 			if op, ok := commandMsg.Command.(Op); ok {
 				if op.Type == GET {
 					// GET请求
-					reply := OpReply{
-						Type: GET,
-					}
-					kv.mu.Lock()
-					if commandMsg.CommandIndex <= kv.lastApplied {
-						DPrintf("outdated command in %v", kv.me)
-						kv.mu.Unlock()
-						continue
-					}
-					//if _, exists := kv.ids[op.Uuid]; !exists {
-					//	kv.ids[op.Uuid] = void{}
-					//}
-					value, ok := kv.kvs[op.Key]
-					if ok {
-						reply.Err = OK
-						reply.Value = value
-					} else {
-						DPrintf("No value for key %v", op.Key)
-						reply.Err = ErrNoKey
-						reply.Value = ""
-					}
-					kv.records[commandMsg.CommandIndex-1] = OpMsg{
-						Request:  op,
-						Response: reply,
-						Done:     true,
-					}
-					kv.lastApplied = commandMsg.CommandIndex
-					kv.mu.Unlock()
-
+					kv.handleGetReq(op, commandMsg.CommandIndex)
 				} else if op.Type == PUT {
 					// PUT请求
-					reply := OpReply{
-						Type: PUT,
-						Err:  OK,
-					}
-					kv.mu.Lock()
-					if commandMsg.CommandIndex <= kv.lastApplied {
-						DPrintf("outdated command in %v", kv.me)
-						kv.mu.Unlock()
-						continue
-					}
-					if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
-						DPrintf("count %v already exists", op.Count)
-					} else {
-						kv.ids[op.Uuid] = op.Count
-						DPrintf("%v add key:%v value:%v", kv.me, op.Key, op.Value)
-						kv.ids[op.Uuid] = op.Count
-						kv.kvs[op.Key] = op.Value
-					}
-					kv.records[commandMsg.CommandIndex-1] = OpMsg{
-						Request:  op,
-						Response: reply,
-						Done:     true,
-					}
-					kv.lastApplied = commandMsg.CommandIndex
-					kv.mu.Unlock()
+					kv.handlePutReq(op, commandMsg.CommandIndex)
 				} else {
 					// APPEND请求
-					//appendMsg, _ := op.Args.(PutAppendArgs)
-					reply := OpReply{
-						Type: APPEND,
-					}
-					kv.mu.Lock()
-					if commandMsg.CommandIndex <= kv.lastApplied {
-						DPrintf("outdated command in %v", kv.me)
-						kv.mu.Unlock()
-						continue
-					}
-					if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
-						DPrintf("count %v already exists", op.Count)
-						reply.Err = OK
-					} else {
-						kv.ids[op.Uuid] = op.Count
-						DPrintf("%v add key:%v value:%v", kv.me, op.Key, op.Value)
-						_, ok := kv.kvs[op.Key]
-						if ok {
-							reply.Err = OK
-							kv.kvs[op.Key] += op.Value
-						} else {
-							reply.Err = ErrNoKey
-							kv.kvs[op.Key] = op.Value
-						}
-					}
-					//if _, exists := kv.ids[op.Uuid]; exists {
-					//	DPrintf("uuid %v already exists", op.Uuid)
-					//} else {
-					//	kv.ids[op.Uuid] = void{}
-					//}
-					kv.records[commandMsg.CommandIndex-1] = OpMsg{
-						Request:  op,
-						Response: reply,
-						Done:     true,
-					}
-					kv.lastApplied = commandMsg.CommandIndex
-					kv.mu.Unlock()
+					kv.handleAppendReq(op, commandMsg.CommandIndex)
 				}
 			}
 
@@ -191,59 +236,48 @@ func (kv *KVServer) checkCh() {
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-
+	replyCh := make(chan OpReply)
 	op := Op{
-		Key:  args.Key,
-		Type: GET,
-		Uuid: args.Token,
+		Key:     args.Key,
+		Type:    GET,
+		Uuid:    args.Token,
+		ReplyCh: replyCh,
 	}
 	reply.Err = ErrWrongLeader
+	//index, _, isLeader := kv.rf.Start(op)
 	index, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		return
 	}
+	DPrintf("%v get a get request %v", kv.me, index)
 	reply.LeaderId = kv.me
-	kv.mu.Lock()
-	opMsg := OpMsg{
-		Request: op,
-		Done:    false,
-	}
-	kv.records[index-1] = opMsg
-	kv.mu.Unlock()
 
-	startTime := time.Now().UnixMilli()
-	for {
-		if time.Now().UnixMilli()-startTime > 350 {
-			// 大于500ms则返回
-			DPrintf("time out ")
-			return
-		}
-		kv.mu.Lock()
-		if kv.records[index-1].Done {
-			if kv.records[index-1].Request != op {
-				// 说明不是原来的请求
-				kv.mu.Unlock()
-				return
-			}
-			reply.Err = kv.records[index-1].Response.Err
-			reply.Value = kv.records[index-1].Response.Value
-			kv.mu.Unlock()
-			return
-		}
-		kv.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
+	// TODO
+	// change polling to channel or condition valuable
+	select {
+	case opReply := <-replyCh:
+		reply.Err = opReply.Err
+		reply.Value = opReply.Value
+		DPrintf("%v get a get reply %v", kv.me, index)
+		return
+
+	case <-time.After(400 * time.Millisecond):
+		DPrintf("time out")
+		return
 	}
 
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	rpc_start := time.Now().UnixMilli()
+	//rpc_start := time.Now().UnixMilli()
+	replyCh := make(chan OpReply)
 	op := Op{
-		Key:   args.Key,
-		Value: args.Value,
-		Uuid:  args.Uuid,
-		Count: args.Count,
+		Key:     args.Key,
+		Value:   args.Value,
+		Uuid:    args.Uuid,
+		Count:   args.Count,
+		ReplyCh: replyCh,
 	}
 	if args.Op == "Put" {
 		op.Type = PUT
@@ -255,45 +289,33 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	if _, exist := kv.ids[args.Uuid]; exist && kv.ids[args.Uuid] >= args.Count {
 		// 说明是重复的请求
 		reply.Err = OK
+		DPrintf("repeat request")
 		kv.mu.Unlock()
 		return
 	}
 	kv.mu.Unlock()
 
+	//index, _, isLeader := kv.rf.Start(op)
 	index, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		return
 	}
+	DPrintf("%v got a put or append request", kv.me, index)
 	reply.LeaderId = kv.me
 
-	kv.mu.Lock()
-	kv.records[index-1] = OpMsg{
-		Request: op,
-		Done:    false,
+	// TODO
+	// change polling to channel or condition valuable
+	select {
+	case opReply := <-replyCh:
+		reply.Err = opReply.Err
+		DPrintf("%v got a put or append reply %v", kv.me, index)
+		return
+
+	case <-time.After(400 * time.Millisecond):
+		DPrintf("time out")
+		return
 	}
-	kv.mu.Unlock()
-	DPrintf("%v got a put or append request", kv.me)
-	startTime := time.Now().UnixMilli()
-	for {
-		if time.Now().UnixMilli()-startTime > 350 {
-			DPrintf("time out ")
-			return
-		}
-		kv.mu.Lock()
-		if kv.records[index-1].Done {
-			if kv.records[index-1].Request != op {
-				DPrintf("not the same request at the same index %v", index)
-				kv.mu.Unlock()
-				return
-			}
-			reply.Err = kv.records[index].Response.Err
-			DPrintf("rpc time pass: %v", time.Now().UnixMilli()-rpc_start)
-			kv.mu.Unlock()
-			return
-		}
-		kv.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-	}
+
 }
 
 // Kill
@@ -431,7 +453,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 		kv.lastApplied = 0
 	}
 	kv.mu.Unlock()
-	kv.records = make(map[int]OpMsg)
+	//kv.records = make(map[int]OpMsg)
 
 	go kv.checkCh()
 	go kv.checkStateSize()

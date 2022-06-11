@@ -60,7 +60,7 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{
 		Key: key,
 	}
-	DPrintf("client send a get request, uuid: %v", args.Token)
+	DPrintf("client %v send a get request", ck.uuid)
 	DPrintf("leader %v", ck.lastLeader)
 	ck.mu.Unlock()
 	for k := ck.lastLeader; ; k++ {
@@ -85,7 +85,7 @@ func (ck *Clerk) Get(key string) string {
 
 }
 
-//
+// PutAppend
 // shared by Put and Append.
 //
 // you can send an RPC with code like this:
@@ -106,6 +106,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	ck.mu.Lock()
 	args.Count = ck.count
 	ck.count++
+	DPrintf("client %v send a put or append request", ck.uuid)
 	DPrintf("leader %v", ck.lastLeader)
 	//startTime := time.Now().UnixMilli()
 	ck.mu.Unlock()
@@ -114,12 +115,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		reply := PutAppendReply{}
 		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
 		if !ok {
+			DPrintf("rpc fail")
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
-			ck.mu.Lock()
+			DPrintf("wrong leader")
 			//DPrintf("wrong leader %v", ck.lastLeader)
-			ck.mu.Unlock()
 			continue
 		}
 		ck.mu.Lock()
