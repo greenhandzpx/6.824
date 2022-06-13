@@ -235,12 +235,19 @@ func (kv *KVServer) checkCh() {
 
 }
 
+// When a new request comes, it registers a channel in the server.
+// When the request is committed by raft, server handles the request and
+// sends the result to the client using this channel.
 func (kv *KVServer) registerReplyCh(index int) chan OpReply {
 	replyCh, ok := kv.replyChs[index]
 	if !ok {
 		kv.replyChs[index] = make(chan OpReply)
 		return kv.replyChs[index]
 	}
+
+	// if this index's slot has been occupied,
+	// then the server may become follower,
+	// so we should notify the client that error wrong leader
 	select {
 	case replyCh <- OpReply{
 		Err: ErrWrongLeader,
@@ -249,9 +256,6 @@ func (kv *KVServer) registerReplyCh(index int) chan OpReply {
 	case <-time.After(sendTimeout * time.Millisecond):
 		return replyCh
 	}
-	// if this index's slot has been occupied,
-	// then the server may become follower,
-	// so we should notify the client that error wrong leader
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
