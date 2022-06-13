@@ -32,13 +32,13 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 type Op struct {
-	Type    int
-	Key     string
-	Value   string
-	Uuid    int64 // 每个客户的唯一id
-	Count   int
-	ReplyCh chan OpReply // 接收server的回复
-	Term    int
+	Type  int
+	Key   string
+	Value string
+	Uuid  int64 // 每个客户的唯一id
+	Count int
+	//ReplyCh chan OpReply // 接收server的回复
+	Term int
 }
 
 type OpReply struct {
@@ -80,6 +80,39 @@ type KVServer struct {
 	lastApplied int
 }
 
+func (kv *KVServer) sendReply(commandIndex int, reply *OpReply) {
+	replyCh, ok := kv.replyChs[commandIndex]
+	if !ok {
+		return
+	}
+	// only leader whose entry's term is the right term should it notify the client
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		//select {
+		//case replyCh <- OpReply{
+		//	Err: ErrWrongLeader,
+		//}:
+		//	return
+		//case <-time.After(sendTimeout * time.Millisecond):
+		//	return
+		//}
+		return
+	}
+	go func() {
+		select {
+		//case op.ReplyCh <- reply:
+		case replyCh <- *reply:
+			DPrintf("%v send a get reply, %v", kv.me, commandIndex)
+			kv.mu.Lock()
+			kv.lastApplied = commandIndex
+			kv.mu.Unlock()
+		case <-time.After(sendTimeout * time.Millisecond):
+			DPrintf("%v send a get reply %v timeout", kv.me, commandIndex)
+			return
+		}
+	}()
+
+}
+
 func (kv *KVServer) handleGetReq(op Op, commandIndex int) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -104,47 +137,10 @@ func (kv *KVServer) handleGetReq(op Op, commandIndex int) {
 		reply.Value = ""
 	}
 
-	// only leader whose entry's term is the right term should it notify the client
-	if _, isLeader := kv.rf.GetState(); !isLeader {
-		return
-	}
+	kv.lastApplied++
 
-	//select {
-	////case op.ReplyCh <- reply:
-	//case kv.getReplyCh(commandIndex) <- reply:
-	//	DPrintf("%v send a get reply, %v", kv.me, commandIndex)
-	//	//kv.mu.Lock()
-	//	kv.lastApplied = commandIndex
-	//	//kv.mu.Unlock()
-	//case <-time.After(sendTimeout * time.Millisecond):
-	//	DPrintf("%v send a get reply %v timeout", kv.me, commandIndex)
-	//	return
-	//}
+	kv.sendReply(commandIndex, &reply)
 
-	replyCh, ok := kv.replyChs[commandIndex]
-	if !ok {
-		return
-	}
-	go func() {
-		select {
-		//case op.ReplyCh <- reply:
-		case replyCh <- reply:
-			DPrintf("%v send a get reply, %v", kv.me, commandIndex)
-			kv.mu.Lock()
-			kv.lastApplied = commandIndex
-			kv.mu.Unlock()
-		case <-time.After(sendTimeout * time.Millisecond):
-			DPrintf("%v send a get reply %v timeout", kv.me, commandIndex)
-			return
-		}
-	}()
-
-	//kv.records[commandMsg.CommandIndex-1].Response <- reply
-	//kv.records[commandMsg.CommandIndex-1] = OpMsg{
-	//	Request:  op,
-	//	Response: reply,
-	//	Done:     true,
-	//}
 }
 
 func (kv *KVServer) handleAppendReq(op Op, commandIndex int) {
@@ -175,56 +171,9 @@ func (kv *KVServer) handleAppendReq(op Op, commandIndex int) {
 			DPrintf("%v put(append) key:%v value:%v", kv.me, op.Key, op.Value)
 		}
 	}
-	//if _, exists := kv.ids[op.Uuid]; exists {
-	//	DPrintf("uuid %v already exists", op.Uuid)
-	//} else {
-	//	kv.ids[op.Uuid] = void{}
 
-	// only leader whose entry's term is the right term should it notify the client
-	//if term, isLeader := kv.rf.GetState();
-	//	!isLeader || (op.Term != term) {
-	//	return
-	//}
-	if _, isLeader := kv.rf.GetState(); !isLeader {
-		return
-	}
-	//select {
-	////case op.ReplyCh <- reply:
-	//case kv.getReplyCh(commandIndex) <- reply:
-	//	DPrintf("%v send a append reply %v(k:%v v:%v)",
-	//		kv.me, commandIndex, op.Key, op.Value)
-	//	//kv.mu.Lock()
-	//	kv.lastApplied = commandIndex
-	//	//kv.mu.Unlock()
-	//case <-time.After(sendTimeout * time.Millisecond):
-	//	DPrintf("%v send a append reply %v timeout", kv.me, commandIndex)
-	//	return
-	//}
-
-	replyCh, ok := kv.replyChs[commandIndex]
-	if !ok {
-		return
-	}
-	go func() {
-		select {
-		//case op.ReplyCh <- reply:
-		case replyCh <- reply:
-			DPrintf("%v send a append reply %v(k:%v v:%v)",
-				kv.me, commandIndex, op.Key, op.Value)
-			kv.mu.Lock()
-			kv.lastApplied = commandIndex
-			kv.mu.Unlock()
-		case <-time.After(sendTimeout * time.Millisecond):
-			DPrintf("%v send a append reply %v timeout", kv.me, commandIndex)
-			return
-		}
-	}()
-
-	//kv.records[commandMsg.CommandIndex-1] = OpMsg{
-	//	Request:  op,
-	//	Response: reply,
-	//	Done:     true,
-	//}
+	kv.lastApplied++
+	kv.sendReply(commandIndex, &reply)
 }
 
 func (kv *KVServer) handlePutReq(op Op, commandIndex int) {
@@ -249,46 +198,9 @@ func (kv *KVServer) handlePutReq(op Op, commandIndex int) {
 		kv.ids[op.Uuid] = op.Count
 		kv.kvs[op.Key] = op.Value
 	}
+	kv.lastApplied++
+	kv.sendReply(commandIndex, &reply)
 
-	// only leader whose entry's term is the right term should it notify the client
-	//if term, isLeader := kv.rf.GetState();
-	//	!isLeader || (op.Term != term) {
-	//	return
-	//}
-	if _, isLeader := kv.rf.GetState(); !isLeader {
-		return
-	}
-
-	replyCh, ok := kv.replyChs[commandIndex]
-	if !ok {
-		return
-	}
-	//select {
-	////case op.ReplyCh <- reply:
-	//case kv.getReplyCh(commandIndex) <- reply:
-	//	DPrintf("%v send a put reply %v(k:%v v:%v)",
-	//		kv.me, commandIndex, op.Key, op.Value)
-	//	//kv.mu.Lock()
-	//	kv.lastApplied = commandIndex
-	//	//kv.mu.Unlock()
-	//case <-time.After(sendTimeout * time.Millisecond):
-	//	DPrintf("%v send a put reply %v timeout", kv.me, commandIndex)
-	//	return
-	//}
-	go func() {
-		select {
-		//case op.ReplyCh <- reply:
-		case replyCh <- reply:
-			DPrintf("%v send a put reply %v(k:%v v:%v)",
-				kv.me, commandIndex, op.Key, op.Value)
-			kv.mu.Lock()
-			kv.lastApplied = commandIndex
-			kv.mu.Unlock()
-		case <-time.After(sendTimeout * time.Millisecond):
-			DPrintf("%v send a put reply %v timeout", kv.me, commandIndex)
-			return
-		}
-	}()
 }
 
 func (kv *KVServer) checkCh() {
@@ -329,23 +241,27 @@ func (kv *KVServer) registerReplyCh(index int) chan OpReply {
 		kv.replyChs[index] = make(chan OpReply)
 		return kv.replyChs[index]
 	}
+	select {
+	case replyCh <- OpReply{
+		Err: ErrWrongLeader,
+	}:
+		return replyCh
+	case <-time.After(sendTimeout * time.Millisecond):
+		return replyCh
+	}
 	// if this index's slot has been occupied,
 	// then the server may become follower,
 	// so we should notify the client that error wrong leader
-	replyCh <- OpReply{
-		Err: ErrWrongLeader,
-	}
-	return replyCh
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	replyCh := make(chan OpReply)
 	op := Op{
-		Key:     args.Key,
-		Type:    GET,
-		Uuid:    args.Token,
-		ReplyCh: replyCh,
+		Key:  args.Key,
+		Type: GET,
+		Uuid: args.Token,
+		//ReplyCh: replyCh,
 	}
 	reply.Err = ErrWrongLeader
 	//index, _, isLeader := kv.rf.Start(op)
@@ -384,11 +300,11 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	//rpc_start := time.Now().UnixMilli()
 	replyCh := make(chan OpReply)
 	op := Op{
-		Key:     args.Key,
-		Value:   args.Value,
-		Uuid:    args.Uuid,
-		Count:   args.Count,
-		ReplyCh: replyCh,
+		Key:   args.Key,
+		Value: args.Value,
+		Uuid:  args.Uuid,
+		Count: args.Count,
+		//ReplyCh: replyCh,
 	}
 	if args.Op == "Put" {
 		op.Type = PUT
@@ -512,11 +428,13 @@ func (kv *KVServer) checkStateSize() {
 			// 保存键值对和所有的uuid
 			err := e.Encode(kv.kvs)
 			if err != nil {
+				DPrintf("encode error")
 				kv.mu.Unlock()
 				return
 			}
 			err = e.Encode(kv.ids)
 			if err != nil {
+				DPrintf("encode error")
 				kv.mu.Unlock()
 				return
 			}
@@ -524,6 +442,7 @@ func (kv *KVServer) checkStateSize() {
 			//e.Encode(kv.records)
 			err = e.Encode(kv.lastApplied)
 			if err != nil {
+				DPrintf("encode error")
 				kv.mu.Unlock()
 				return
 			}
