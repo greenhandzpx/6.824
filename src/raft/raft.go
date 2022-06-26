@@ -20,6 +20,7 @@ package raft
 import (
 	"6.824/labgob"
 	"bytes"
+	"fmt"
 	"math/rand"
 	//	"bytes"
 	"sync"
@@ -91,17 +92,24 @@ type Raft struct {
 	// 0: follower
 	// 1: candidate
 	// 2: leader
-	state           int
-	lastTime        int64 // 上次收到leader信息的时间点
-	electionTimeout int64 // 单位ms
-	leaderId        int   // 表明当前是否有leader
-	alives          int   // 作为leader时用来表明有效回应的个数
-	votes           int   // 对当前票数进行计数
+	state            int
+	lastTime         int64 // 上次收到leader信息的时间点
+	electionTimeout  int64 // 单位ms
+	heartbeatTimeout int64 // 单位ms
+	leaderId         int   // 表明当前是否有leader
+	alives           int   // 作为leader时用来表明有效回应的个数
+	votes            int   // 对当前票数进行计数
 
 	applyCh chan ApplyMsg
 
 	lastIncludedIndex int // 上一次打快照时的最后一个entry的index
 
+	// (1) when lastApplied < commitIndex, put an applyMsg into this channel
+	// (2) when getting a snapshot, put the snapshot into this channel
+	// Only one thread will fetch msg from the channel and send to the state machine
+	applyMsgCh chan ApplyMsg
+
+	snapshotCond *sync.Cond
 }
 
 // GetPersister
@@ -193,7 +201,11 @@ func (rf *Raft) readPersist(data []byte) int {
 		return -1
 	}
 
-	if rf.startIndex >= startIndex {
+	//if rf.startIndex >= startIndex {
+	//	DPrintf("outdated persist state in %v", rf.me)
+	//	return 1
+	//}
+	if rf.startIndex > startIndex {
 		DPrintf("outdated persist state in %v", rf.me)
 		return 1
 	}
@@ -202,6 +214,7 @@ func (rf *Raft) readPersist(data []byte) int {
 	rf.startIndex = startIndex
 	rf.lastIncludedTerm = lastIncludedTerm
 	rf.log = log
+	fmt.Printf("%v read persist, startIndex:%v\n", rf.me, startIndex)
 	return 0
 }
 
@@ -216,6 +229,7 @@ func (rf *Raft) saveStateAndSnapshot(snapshot []byte) {
 	e.Encode(rf.log)
 	data := w.Bytes()
 	rf.persister.SaveStateAndSnapshot(data, snapshot)
+	fmt.Printf("%v persist state(idx:%v) and snapshot\n", rf.me, rf.startIndex)
 }
 
 // CondInstallSnapshot
@@ -223,8 +237,31 @@ func (rf *Raft) saveStateAndSnapshot(snapshot []byte) {
 // have more recent info since it communicate the snapshot on applyCh.
 //
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
 	// Your code here (2D).
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
+	//
+	//if rf.lastApplied >= lastIncludedIndex {
+	//	// outdated snapshot
+	//	return false
+	//}
+	//
+	//rf.lastApplied = lastIncludedIndex
+	//rf.startIndex = lastIncludedIndex
+	//rf.lastIncludedIndex = lastIncludedIndex
+	//rf.lastIncludedTerm = lastIncludedTerm
+	//DPrintf("follower %v get snapshot and apply to sm, idx %v", rf.me, rf.lastApplied)
+	//rf.persist()
+	//rf.saveStateAndSnapshot(snapshot)
+	//
+	//for i, entry := range rf.log {
+	//	if entry.Index == lastIncludedIndex &&
+	//		entry.Term == lastIncludedTerm {
+	//		rf.log = rf.log[i+1:]
+	//		return true
+	//	}
+	//}
+	//rf.log = nil
 	return true
 }
 
@@ -235,8 +272,6 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that Index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-	DPrintf("Calls Snapshot(index:%v) in %v", index, rf.me)
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -244,15 +279,20 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		DPrintf("index %v is smaller than startIndex %v", index, rf.startIndex)
 		return
 	}
+
 	if index-rf.startIndex > len(rf.log) {
 		DPrintf("%v log too short", rf.me)
 		return
 	}
+
+	//DPrintf("Calls Snapshot(index:%v) in %v", index, rf.me)
+	fmt.Printf("Calls Snapshot(index:%v) in %v\n", index, rf.me)
 	rf.lastIncludedTerm = rf.log[index-rf.startIndex-1].Term
 	rf.lastIncludedIndex = rf.log[index-rf.startIndex-1].Index
 	rf.log = rf.log[index-rf.startIndex:]
 	rf.startIndex = index
-	rf.persist()
+	// here we won't persist, because 'saveStateAndSnapshot' will do this
+	//rf.persist()
 	rf.saveStateAndSnapshot(snapshot)
 }
 
@@ -284,6 +324,10 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.state = 0
 		rf.persist()
 	}
+	if args.LastIncludedIndex <= rf.lastApplied {
+		// the snapshot is outdated, we shouldn't apply it
+		return
+	}
 	applymsg := ApplyMsg{
 		CommandValid: false,
 
@@ -292,22 +336,30 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		SnapshotTerm:  args.LastIncludedTerm,
 		SnapshotIndex: args.LastIncludedIndex,
 	}
-	rf.applyCh <- applymsg
+
+	// here we just send snapshot asynchronously
+	//go func() { rf.applyCh <- applymsg }()
+	go func() { rf.applyMsgCh <- applymsg }()
+
 	rf.lastApplied = args.LastIncludedIndex
 	rf.startIndex = args.LastIncludedIndex
 	rf.lastIncludedIndex = args.LastIncludedIndex
 	rf.lastIncludedTerm = args.LastIncludedTerm
-	rf.persist()
-	rf.saveStateAndSnapshot(args.Data)
-
+	DPrintf("follower %v get snapshot and apply to sm, idx %v", rf.me, rf.lastApplied)
+	// we should trim the log and then persist(quite important!!!)
 	for i, entry := range rf.log {
-		if entry.Index == args.LastIncludedIndex &&
-			entry.Term == args.LastIncludedTerm {
+		if entry.Index == args.LastIncludedIndex {
 			rf.log = rf.log[i+1:]
+			DPrintf("%v trim its log ", rf.me)
+			rf.persist()
+			rf.saveStateAndSnapshot(args.Data)
 			return
 		}
 	}
 	rf.log = nil
+	rf.persist()
+	rf.saveStateAndSnapshot(args.Data)
+
 }
 
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
@@ -333,8 +385,10 @@ func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply
 			return true
 		}
 		rf.alives++
-		rf.nextIndex[server] = args.LastIncludedIndex + 1
-		rf.matchIndex[server] = args.LastIncludedIndex
+		if rf.nextIndex[server] < args.LastIncludedIndex+1 {
+			rf.nextIndex[server] = args.LastIncludedIndex + 1
+			rf.matchIndex[server] = args.LastIncludedIndex
+		}
 
 		return true
 	}
@@ -701,8 +755,9 @@ func (rf *Raft) heartbeat() {
 					Data:              rf.persister.ReadSnapshot(),
 				}
 				reply := InstallSnapshotReply{}
-				rf.mu.Unlock()
+				DPrintf("follower %v is far behind, next idx:%v", i, rf.nextIndex[i])
 				DPrintf("leader %v send snapshot(index:%v) to %v", rf.me, args.LastIncludedIndex, i)
+				rf.mu.Unlock()
 				go rf.sendInstallSnapshot(i, &args, &reply)
 				continue
 			}
@@ -739,6 +794,7 @@ func (rf *Raft) heartbeat() {
 			go rf.sendAppendEntries(i, &args, &reply)
 		}
 
+		//time.Sleep(rf.heartbeatTimeout * time.Millisecond)
 		time.Sleep(6 * time.Millisecond)
 
 		// 遍历所有有可能可以commit的entry
@@ -799,30 +855,45 @@ func (rf *Raft) sendCommittedEntry() {
 				rf.mu.Unlock()
 				continue
 			}
-			// 先拷贝一份，防止打快照截掉日志
-			log := rf.log[rf.lastApplied-rf.startIndex : rf.commitIndex-rf.startIndex]
+			entry := rf.log[rf.lastApplied-rf.startIndex]
+			applyMsg := ApplyMsg{
+				CommandValid: true,
+				Command:      entry.Command,
+				CommandIndex: entry.Index,
+			}
 			rf.mu.Unlock()
 
-			for _, entry := range log {
-				rf.mu.Lock()
-				if rf.lastApplied >= rf.commitIndex {
-					rf.mu.Unlock()
-					break
-				}
-				rf.mu.Unlock()
-				applymsg := ApplyMsg{
-					CommandValid: true,
-					Command:      entry.Command,
-					CommandIndex: entry.Index,
-				}
-				rf.applyCh <- applymsg
-
-				// 这里不太确定要不要在installSnapshot里修改lastApplied(((
-				rf.mu.Lock()
-				rf.lastApplied = entry.Index
-				rf.mu.Unlock()
-				DPrintf("Entry %v(term %v) is added to state machine in %v", entry.Index, entry.Term, rf.me)
-			}
+			DPrintf("%v send apply msg, idx:%v", rf.me, entry.Index)
+			rf.applyMsgCh <- applyMsg
+			//// TODO
+			//// There must be something wrong here, I should figure out a better solution.
+			//// 先拷贝一份，防止打快照截掉日志
+			//log := rf.log[rf.lastApplied-rf.startIndex : rf.commitIndex-rf.startIndex]
+			//rf.mu.Unlock()
+			//
+			//for _, entry := range log {
+			//	rf.mu.Lock()
+			//	if rf.lastApplied >= rf.commitIndex || rf.lastApplied >= entry.Index {
+			//		// the second case may be caused by snapshot
+			//		rf.mu.Unlock()
+			//		break
+			//	}
+			//
+			//	rf.mu.Unlock()
+			//	DPrintf("%v start to apply entry %v(term %v) to state machine", rf.me, entry.Index, entry.Term)
+			//	applymsg := ApplyMsg{
+			//		CommandValid: true,
+			//		Command:      entry.Command,
+			//		CommandIndex: entry.Index,
+			//	}
+			//	rf.applyCh <- applymsg
+			//
+			//	// 这里不太确定要不要在installSnapshot里修改lastApplied(((
+			//	rf.mu.Lock()
+			//	rf.lastApplied = entry.Index
+			//	rf.mu.Unlock()
+			//	DPrintf("Entry %v(term %v) is added to state machine in %v", entry.Index, entry.Term, rf.me)
+			//}
 		} else {
 			rf.mu.Unlock()
 		}
@@ -1003,6 +1074,46 @@ func (rf *Raft) ticker() {
 	}
 }
 
+// this function ensures that no repeated or outdated entry is applied to sm
+func (rf *Raft) checkCh() {
+
+	for rf.killed() == false {
+		applyMsg := <-rf.applyMsgCh
+		rf.mu.Lock()
+		DPrintf("%v get a msg", rf.me)
+		if applyMsg.CommandValid == true {
+			// normal commit
+			if applyMsg.CommandIndex <= rf.lastApplied {
+				DPrintf("%v outdated or repeated msg, commit idx:%v, lastApplied:%v", rf.me, applyMsg.CommandIndex, rf.lastApplied)
+				rf.mu.Unlock()
+				continue
+			}
+			rf.mu.Unlock()
+
+			rf.applyCh <- applyMsg
+			DPrintf("%v start to apply entry %v to state machine", rf.me, applyMsg.CommandIndex)
+
+			rf.mu.Lock()
+			rf.lastApplied = applyMsg.CommandIndex
+			rf.mu.Unlock()
+		} else {
+			// snapshot
+			if applyMsg.SnapshotIndex < rf.lastApplied {
+				rf.mu.Unlock()
+				continue
+			}
+			rf.mu.Unlock()
+
+			rf.applyCh <- applyMsg
+			DPrintf("%v start to apply snapshot %v(term %v) to state machine", rf.me, applyMsg.SnapshotIndex, applyMsg.SnapshotTerm)
+
+			rf.mu.Lock()
+			rf.lastApplied = applyMsg.SnapshotIndex
+			rf.mu.Unlock()
+		}
+	}
+}
+
 // Make
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -1025,6 +1136,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.startIndex = 0
 	if rf.readPersist(rf.persister.ReadRaftState()) == 1 {
 		// 说明没有存放数据
+		DPrintf("no persist data in %v", rf.me)
 		rf.currentTerm = 0
 		rf.votedFor = -1
 		rf.startIndex = 0
@@ -1045,15 +1157,18 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// 每个server的timeout在400到800ms之间(待定）
 	rf.electionTimeout = 400 + rand.Int63()%300
+	rf.heartbeatTimeout = 80
 	rf.leaderId = -1
 	rf.votes = 0
 	rf.alives = 0
 
 	rf.applyCh = applyCh
-
+	// not sure whether we should set a buffer
+	rf.applyMsgCh = make(chan ApplyMsg)
+	rf.snapshotCond = sync.NewCond(new(sync.Mutex))
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.sendCommittedEntry()
-
+	go rf.checkCh()
 	return rf
 }

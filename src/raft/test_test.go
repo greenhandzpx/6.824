@@ -1181,23 +1181,28 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 }
 
 func TestSnapshotBasic2D(t *testing.T) {
+	DPrintf("Test (2D): snapshots basic")
 	snapcommon(t, "Test (2D): snapshots basic", false, true, false)
 }
 
 func TestSnapshotInstall2D(t *testing.T) {
+	DPrintf("Test (2D): install snapshots (disconnect)")
 	snapcommon(t, "Test (2D): install snapshots (disconnect)", true, true, false)
 }
 
 func TestSnapshotInstallUnreliable2D(t *testing.T) {
+	DPrintf("Test (2D): install snapshots (disconnect+unreliable)")
 	snapcommon(t, "Test (2D): install snapshots (disconnect+unreliable)",
 		true, false, false)
 }
 
 func TestSnapshotInstallCrash2D(t *testing.T) {
+	DPrintf("Test (2D): install snapshots (crash)")
 	snapcommon(t, "Test (2D): install snapshots (crash)", false, true, true)
 }
 
 func TestSnapshotInstallUnCrash2D(t *testing.T) {
+	DPrintf("Test (2D): install snapshots (unreliable+crash)")
 	snapcommon(t, "Test (2D): install snapshots (unreliable+crash)", false, false, true)
 }
 
@@ -1207,6 +1212,7 @@ func TestSnapshotInstallUnCrash2D(t *testing.T) {
 // tail of the log?
 //
 func TestSnapshotAllCrash2D(t *testing.T) {
+	DPrintf("Test (2D): crash and restart all servers")
 	servers := 3
 	iters := 5
 	cfg := make_config(t, servers, false, true)

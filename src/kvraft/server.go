@@ -102,9 +102,9 @@ func (kv *KVServer) sendReply(commandIndex int, reply *OpReply) {
 		//case op.ReplyCh <- reply:
 		case replyCh <- *reply:
 			DPrintf("%v send a get reply, %v", kv.me, commandIndex)
-			kv.mu.Lock()
-			kv.lastApplied = commandIndex
-			kv.mu.Unlock()
+			//kv.mu.Lock()
+			//kv.lastApplied = commandIndex
+			//kv.mu.Unlock()
 		case <-time.After(sendTimeout * time.Millisecond):
 			DPrintf("%v send a get reply %v timeout", kv.me, commandIndex)
 			return
@@ -131,13 +131,15 @@ func (kv *KVServer) handleGetReq(op Op, commandIndex int) {
 	if ok {
 		reply.Err = OK
 		reply.Value = value
+		DPrintf("(idx:%v)%v get key:%v value:%v", commandIndex, kv.me, op.Key, value)
 	} else {
 		DPrintf("No value for key %v", op.Key)
 		reply.Err = ErrNoKey
 		reply.Value = ""
 	}
 
-	kv.lastApplied++
+	kv.lastApplied = commandIndex
+	//kv.lastApplied++
 
 	kv.sendReply(commandIndex, &reply)
 
@@ -164,7 +166,8 @@ func (kv *KVServer) handleAppendReq(op Op, commandIndex int) {
 		if ok {
 			reply.Err = OK
 			kv.kvs[op.Key] += op.Value
-			DPrintf("%v append key:%v value:%v", kv.me, op.Key, op.Value)
+			DPrintf("(idx:%v)%v append key:%v value:%v", commandIndex, kv.me, op.Key, op.Value)
+			DPrintf("%v now k:%v, v:%v", kv.me, op.Key, kv.kvs[op.Key])
 		} else {
 			reply.Err = ErrNoKey
 			kv.kvs[op.Key] = op.Value
@@ -172,7 +175,8 @@ func (kv *KVServer) handleAppendReq(op Op, commandIndex int) {
 		}
 	}
 
-	kv.lastApplied++
+	kv.lastApplied = commandIndex
+	//kv.lastApplied++
 	kv.sendReply(commandIndex, &reply)
 }
 
@@ -194,11 +198,12 @@ func (kv *KVServer) handlePutReq(op Op, commandIndex int) {
 		DPrintf("count %v already exists", op.Count)
 	} else {
 		kv.ids[op.Uuid] = op.Count
-		DPrintf("%v put key:%v value:%v", kv.me, op.Key, op.Value)
+		DPrintf("(idx:%v)%v put key:%v value:%v", commandIndex, kv.me, op.Key, op.Value)
 		kv.ids[op.Uuid] = op.Count
 		kv.kvs[op.Key] = op.Value
 	}
-	kv.lastApplied++
+	kv.lastApplied = commandIndex
+	//kv.lastApplied++
 	kv.sendReply(commandIndex, &reply)
 
 }
@@ -228,6 +233,7 @@ func (kv *KVServer) checkCh() {
 			// 如果是快照的消息
 			snapshot := commandMsg.Snapshot
 			kv.mu.Lock()
+			DPrintf("%v gets a snapshot msg", kv.me)
 			kv.readSnapshot(snapshot)
 			kv.mu.Unlock()
 		}
@@ -426,7 +432,6 @@ func (kv *KVServer) checkStateSize() {
 		}
 		kv.mu.Lock()
 		if kv.rf.GetPersister().RaftStateSize() > kv.maxraftstate+100 {
-			DPrintf("%v calls snapshot, lastApplied:%v", kv.me, kv.lastApplied)
 			w := new(bytes.Buffer)
 			e := labgob.NewEncoder(w)
 			// 保存键值对和所有的uuid
@@ -442,7 +447,6 @@ func (kv *KVServer) checkStateSize() {
 				kv.mu.Unlock()
 				return
 			}
-			// records 也许不用存？
 			//e.Encode(kv.records)
 			err = e.Encode(kv.lastApplied)
 			if err != nil {
@@ -452,6 +456,7 @@ func (kv *KVServer) checkStateSize() {
 			}
 			data := w.Bytes()
 			kv.rf.Snapshot(kv.lastApplied, data)
+			DPrintf("%v calls snapshot, lastApplied:%v", kv.me, kv.lastApplied)
 		}
 		kv.mu.Unlock()
 		time.Sleep(5 * time.Millisecond)
