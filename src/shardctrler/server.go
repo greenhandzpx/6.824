@@ -4,6 +4,7 @@ import (
 	"6.824/raft"
 	"bytes"
 	"log"
+	"sort"
 	"sync/atomic"
 	"time"
 )
@@ -146,7 +147,12 @@ func (sc *ShardCtrler) handleJoin(op Op, commandIndex int) {
 			 */
 			shardIdx := 0
 			cnt := 0
-			for GID, _ := range newConfig.Groups {
+			var keys []int
+			for k := range newConfig.Groups {
+				keys = append(keys, k)
+			}
+			sort.Ints(keys)
+			for _, GID := range keys {
 				step := shard
 				if cnt < remaining {
 					step++
@@ -167,36 +173,48 @@ func (sc *ShardCtrler) handleJoin(op Op, commandIndex int) {
 
 		// calculate the cnt of shards that every group owns
 		shardCnt := make(map[int][]int)
-
 		for i := 0; i < NShards; i++ {
 			shardCnt[oldConfig.Shards[i]] = append(shardCnt[oldConfig.Shards[i]], i)
 		}
-		//DPrintf("groups size:%v", len(oldConfig.Groups))
-		//for k, v := range shardCnt {
-		//	DPrintf("g:%v, s size:%v", k, len(v))
-		//}
-
-		// traverse the new groups and allocate shards to them
-		for newGID, _ := range newConfig.Groups {
-			for gid, shards := range shardCnt {
-				if len(shards) <= shard {
-					// this group doesn't have redundant shards
-					continue
-				}
-				shardsNeeded := shard - len(shardCnt[newGID])
-				// find those who have redundant shards and give some to the new group
-				if len(shards)-shard >= shardsNeeded {
-					// give the first 'shard' cnts to the new one
-					shardCnt[newGID] = append(shardCnt[newGID], shards[0:shardsNeeded]...)
-					shardCnt[gid] = shards[shardsNeeded:]
-					//for _, s := range shardCnt[gid] {
-					//	DPrintf("s:%v", s)
-					//}
-					break
-				}
-				shardCnt[newGID] = append(shardCnt[newGID], shards[0:len(shards)-shard]...)
-				shards = shards[len(shards)-shard:]
+		for GID := range op.Servers {
+			shardCnt[GID] = []int{}
+		}
+		for g, s := range shardCnt {
+			DPrintf("idx %v g:%v, s size:%v", commandIndex, g, len(s))
+		}
+		// fetch all the remaining shards
+		var remainingShards []int
+		var keys []int
+		for k := range shardCnt {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		for _, GID := range keys {
+			shards := shardCnt[GID]
+			if len(shards) <= shard {
+				continue
 			}
+			DPrintf("idx %v len(shards):%v, shard:%v", commandIndex, len(shards), shard)
+			limit := shard
+			remainingShards = append(remainingShards, shards[limit:]...)
+			shardCnt[GID] = shards[0:limit]
+		}
+		DPrintf("remainShards size:%v", len(remainingShards))
+		// when we fetch all the remaining shards, we can allocate them
+		// to those needing shards
+		cnt := 0
+		startIdx := 0
+		for _, GID := range keys {
+			shards := shardCnt[GID]
+			expect := shard
+			if cnt < remaining {
+				cnt++
+				expect++
+			}
+			bound := startIdx + expect - len(shards)
+			shardCnt[GID] = append(shardCnt[GID],
+				remainingShards[startIdx:bound]...)
+			startIdx = bound
 		}
 
 		// copy the old groups
@@ -210,6 +228,9 @@ func (sc *ShardCtrler) handleJoin(op Op, commandIndex int) {
 			}
 		}
 		sc.configs = append(sc.configs, newConfig)
+		//for s, g := range newConfig.Shards {
+		//	DPrintf("s:%v g:%v", s, g)
+		//}
 		//for s, g := range newConfig.Shards {
 		//	DPrintf("s:%v g:%v", s, g)
 		//}
@@ -257,10 +278,16 @@ func (sc *ShardCtrler) handleLeave(op Op, commandIndex int) {
 		var remainingShards []int
 		// calculate the cnt of shards that every group owns
 		shardCnt := make(map[int][]int)
-
+		DPrintf("server:%v idx:%v", sc.me, commandIndex)
+		DPrintf("leave groups size:%v", len(op.GIDs))
+		DPrintf("old config group size:%v", len(oldConfig.Groups))
+		for g, _ := range oldConfig.Groups {
+			DPrintf("gid:%v", g)
+		}
 		for idx, GID := range oldConfig.Shards {
 			exists := false
 			for _, id := range op.GIDs {
+				DPrintf("leave:%v origin:%v", id, GID)
 				if id == GID {
 					exists = true
 					break
@@ -270,6 +297,19 @@ func (sc *ShardCtrler) handleLeave(op Op, commandIndex int) {
 				remainingShards = append(remainingShards, idx)
 			} else {
 				shardCnt[GID] = append(shardCnt[GID], idx)
+			}
+		}
+		for GID, _ := range oldConfig.Groups {
+			exists := false
+			for _, id := range op.GIDs {
+				if id == GID {
+					exists = true
+					break
+				}
+			}
+			if _, ok := shardCnt[GID]; !ok && !exists {
+				// means this group doesn't own any shard
+				shardCnt[GID] = []int{}
 			}
 		}
 
@@ -285,30 +325,58 @@ func (sc *ShardCtrler) handleLeave(op Op, commandIndex int) {
 
 		shard := NShards / (len(newConfig.Groups))
 		remaining := NShards % (len(newConfig.Groups))
-		DPrintf("remaining size:%v", len(remainingShards))
+		DPrintf("shard:%v", shard)
+		DPrintf("remaining size:%v, shardCnt size:%v",
+			len(remainingShards), len(shardCnt))
+
+		for s, g := range shardCnt {
+			DPrintf("g:%v shard size:%v", s, len(g))
+		}
 
 		cnt := 0
 		shardIdx := 0
-		for GID, shards := range shardCnt {
+		var keys []int
+		for k := range shardCnt {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		for _, GID := range keys {
+			shards := shardCnt[GID]
 			if len(shards) == shard+1 {
 				cnt++
 				continue
 			}
 			bound := shardIdx + shard - len(shards)
+			DPrintf("len(shards):%v", len(shards))
 			if cnt < remaining {
 				bound++
 				cnt++
 			}
+			if shardIdx >= len(remainingShards) {
+				break
+			}
+			if bound > len(remainingShards) {
+				break
+			}
+			DPrintf("shardIdx:%v, bound:%v", shardIdx, bound)
 			shardCnt[GID] = append(shardCnt[GID],
 				remainingShards[shardIdx:bound]...)
 			shardIdx = bound
 		}
 
+		//for s, g := range shardCnt {
+		//	DPrintf("g:%v shard size:%v", s, len(g))
+		//}
+
 		for group, shards := range shardCnt {
-			for s := range shards {
+			for _, s := range shards {
 				newConfig.Shards[s] = group
 			}
 		}
+		for s, g := range newConfig.Shards {
+			DPrintf("g:%v, s:%v", s, g)
+		}
+
 		sc.configs = append(sc.configs, newConfig)
 
 	}

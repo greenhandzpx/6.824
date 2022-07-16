@@ -42,11 +42,14 @@ func (ck *Clerk) Query(num int) Config {
 
 	for {
 		// try each known server.
-		for _, srv := range ck.servers {
+		for idx, srv := range ck.servers {
 			var reply QueryReply
 			ok := srv.Call("ShardCtrler.Query", args, &reply)
 			if ok && reply.WrongLeader == false {
 				return reply.Config
+			}
+			if reply.WrongLeader {
+				DPrintf("wrong leader %v", idx)
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
