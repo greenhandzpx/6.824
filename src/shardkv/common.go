@@ -27,10 +27,15 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	// 每个客户的唯一标识
+	Uuid int64
+	// 每个客户发送的请求序号
+	Count int
 }
 
 type PutAppendReply struct {
-	Err Err
+	Err      Err
+	LeaderId int
 }
 
 type GetArgs struct {
@@ -39,6 +44,16 @@ type GetArgs struct {
 }
 
 type GetReply struct {
-	Err   Err
-	Value string
+	Err      Err
+	Value    string
+	LeaderId int
+}
+
+type GetShardsArgs struct {
+	Shard int
+}
+
+type GetShardsReply struct {
+	Kvs map[string]string
+	Err Err
 }
