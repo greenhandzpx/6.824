@@ -1,3 +1,13 @@
+/*
+* @Author: greenhandzpx 893522573@qq.com
+* @Date: 2023-01-09 14:38:42
+* @LastEditors: greenhandzpx 893522573@qq.com
+* @LastEditTime: 2023-01-09 20:11:27
+* @FilePath: /src/shardctrler/common.go
+* @Description:
+*
+* Copyright (c) 2023 by greenhandzpx 893522573@qq.com, All Rights Reserved.
+ */
 package shardctrler
 
 //
@@ -25,7 +35,7 @@ const NShards = 10
 // Please don't change this.
 type Config struct {
 	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
+	Shards [NShards]int          // shard -> gid
 	Groups map[int][]string // gid -> servers[]
 }
 

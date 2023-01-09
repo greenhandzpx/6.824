@@ -1,4 +1,16 @@
+/*
+ * @Author: greenhandzpx 893522573@qq.com
+ * @Date: 2023-01-09 14:38:42
+ * @LastEditors: greenhandzpx 893522573@qq.com
+ * @LastEditTime: 2023-01-09 22:46:54
+ * @FilePath: /src/shardkv/common.go
+ * @Description:
+ *
+ * Copyright (c) 2023 by greenhandzpx 893522573@qq.com, All Rights Reserved.
+ */
 package shardkv
+
+import "6.824/shardctrler"
 
 //
 // Sharded key/value server.
@@ -14,6 +26,8 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
+	// when the server that needs to handout shards is far behind
+	ErrRetry       = "ErrRetry"  
 )
 
 type Err string
@@ -51,9 +65,24 @@ type GetReply struct {
 
 type GetShardsArgs struct {
 	Shard int
+	Config shardctrler.Config
+	Gid int
 }
 
 type GetShardsReply struct {
+	// Kvs map[string]string
+	Err Err
+	Config shardctrler.Config
+}
+
+type HandoutShardsArgs struct {
+	Err Err
+	Shard int
+	Gid int
 	Kvs map[string]string
+	Config shardctrler.Config
+}
+
+type HandoutShardsReply struct {
 	Err Err
 }
