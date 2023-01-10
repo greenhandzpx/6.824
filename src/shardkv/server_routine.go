@@ -2,7 +2,7 @@
  * @Author: greenhandzpx 893522573@qq.com
  * @Date: 2023-01-09 22:57:24
  * @LastEditors: greenhandzpx 893522573@qq.com
- * @LastEditTime: 2023-01-09 22:59:29
+ * @LastEditTime: 2023-01-10 22:24:11
  * @FilePath: /src/shardkv/server_routine.go
  * @Description: 
  * 
@@ -67,7 +67,7 @@ func (kv *ShardKV) checkStateSize() {
 			return
 		}
 		kv.mu.Lock()
-		if kv.rf.GetPersister().RaftStateSize() > kv.maxraftstate+100 {
+		if kv.rf.GetPersister().RaftStateSize() > kv.maxraftstate+200 {
 			w := new(bytes.Buffer)
 			e := labgob.NewEncoder(w)
 			// 保存键值对和所有的uuid
@@ -90,9 +90,34 @@ func (kv *ShardKV) checkStateSize() {
 				kv.mu.Unlock()
 				return
 			}
+			err = e.Encode(kv.migrating)
+			if err != nil {
+				DPrintf("encode error")
+				kv.mu.Unlock()
+				return
+			}
+			err = e.Encode(kv.config)
+			if err != nil {
+				DPrintf("encode error")
+				kv.mu.Unlock()
+				return
+			}
+			err = e.Encode(kv.pendingConfig)
+			if err != nil {
+				DPrintf("encode error")
+				kv.mu.Unlock()
+				return
+			}
+			err = e.Encode(kv.shardVersions)
+			if err != nil {
+				DPrintf("encode error")
+				kv.mu.Unlock()
+				return
+			}
+
 			data := w.Bytes()
 			kv.rf.Snapshot(kv.lastApplied, data)
-			DPrintf("%v(%v) calls snapshot, lastApplied:%v", kv.me, kv.gid, kv.lastApplied)
+			// DPrintf("%v(%v) calls snapshot, lastApplied:%v", kv.me, kv.gid, kv.lastApplied)
 		}
 		kv.mu.Unlock()
 		time.Sleep(5 * time.Millisecond)
@@ -109,13 +134,20 @@ func (kv *ShardKV) checkConfig() {
 			time.Sleep(80 * time.Millisecond)
 			continue
 		}
-		newConfig := kv.mck.Query(-1)
+
+		kv.mu.Lock()
+		configNumNow := kv.config.Num
+		kv.mu.Unlock()
+		// newConfig := kv.mck.Query(-1)
+		// query the next version config
+		newConfig := kv.mck.Query(configNumNow + 1)
 
 		op := Op{}
 		kv.mu.Lock()
 		
-		if newConfig.Num > kv.config.Num || (newConfig.Num == kv.config.Num &&
-			time.Now().UnixMilli() - kv.lastMigrateTime > migrateTimeout) {
+		if newConfig.Num > kv.config.Num &&
+			time.Now().UnixMilli() - kv.lastMigrateTime > migrateTimeout {
+			// migrateTimeout is used to not sending migrate request too often
 		// if newConfig.Num > kv.config.Num && newConfig.Num >= kv.configOutstanding {
 			if _, isLeader := kv.rf.GetState(); !isLeader {
 				kv.mu.Unlock()

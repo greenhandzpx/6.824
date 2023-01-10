@@ -3,7 +3,6 @@ package shardkv
 import (
 	"6.824/labrpc"
 	"6.824/shardctrler"
-	"bytes"
 	"log"
 	"sync/atomic"
 	"time"
@@ -92,8 +91,8 @@ type ShardKV struct {
 	
 	// the config that's being handled(waiting for other groups' kv)
 	pendingConfig shardctrler.Config 
-	// check whether we have collected all shards according to the pending config
-	pendingShards map[string]Dummy
+	// // check whether we have collected all shards according to the pending config
+	// pendingShards map[string]Dummy
 	// last timestamp that the checkConfig function send log to raft	
 	lastMigrateTime int64
 	// indicate every shard's config num
@@ -241,6 +240,7 @@ func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
 	op := Op{
 		Type: GETSHARDS,
 		Conf: args.Config,
+		Shard: args.Shard,
 	}
 	
 	_, _, isLeader := kv.rf.Start(op)
@@ -290,45 +290,6 @@ func (kv *ShardKV) HandoutShards(args *HandoutShardsArgs, reply *HandoutShardsRe
 	reply.Err = OK
 }
 
-func (kv *ShardKV) readSnapshot(snapshot []byte) int {
-	//kv.rf.GetPersister().ReadSnapshot()
-	if snapshot == nil || len(snapshot) < 1 {
-		return 1
-	}
-	r := bytes.NewBuffer(snapshot)
-	d := labgob.NewDecoder(r)
-	var kvs map[string]string
-	var ids map[int64]int
-	//var records map[int]OpMsg
-	var lastApplied int
-	if err := d.Decode(&kvs); err != nil {
-		DPrintf("Decode error!")
-		return 2
-	}
-	if err := d.Decode(&ids); err != nil {
-		DPrintf("Decode error!")
-		return 2
-	}
-	//if err := d.Decode(&records); err != nil {
-	//	DPrintf("Decode error!")
-	//	return 2
-	//}
-	if err := d.Decode(&lastApplied); err != nil {
-		DPrintf("Decode error!")
-		return 2
-	}
-	if kv.lastApplied >= lastApplied {
-		// 说明是过期的快照，可以忽略
-		DPrintf("outdated snapshot in %v(%v), lastApplied:%v", kv.me, kv.gid, lastApplied)
-		return 1
-	}
-	DPrintf("%v(%v) read snapshot, lastApplied:%v", kv.me, kv.gid, lastApplied)
-	kv.kvs = kvs
-	kv.ids = ids
-	//kv.records = records
-	kv.lastApplied = lastApplied
-	return 0
-}
 
 
 // Kill
@@ -400,7 +361,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.configOutstanding = 0
 	kv.migrating = false
 
-	kv.pendingShards = make(map[string]Dummy)
+	// kv.pendingShards = make(map[string]Dummy)
 	kv.lastMigrateTime = 0
 
 	kv.shardVersions = make([]int, shardctrler.NShards)
