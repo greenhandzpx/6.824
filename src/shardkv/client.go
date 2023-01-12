@@ -118,14 +118,20 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
+			DPrintf("client send put or append req, k:%v, v:%v, gid %v, cnt %v", 
+					key, value, gid, args.Count)
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
+					DPrintf("client finish put or append req, k:%v, v:%v, gid:%v, cnt:%v",
+							key, value, gid, args.Count)	
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {
+					DPrintf("client change, k:%v v:%v cnt:%v, old group:%v", 
+							key, value, args.Count, gid)	
 					break
 				}
 				// ... not ok, or ErrWrongLeader

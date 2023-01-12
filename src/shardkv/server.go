@@ -54,6 +54,7 @@ type Op struct {
 	// HANDOUTSHARDS
 	HandoutErr Err
 	Kvs map[string]string
+	Ids map[int64]int
 
 
 	Uuid  int64 // 每个客户的唯一id
@@ -178,15 +179,15 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		op.Type = APPEND
 	}
 	reply.Err = ErrWrongLeader
-	kv.mu.Lock()
-	if _, exist := kv.ids[args.Uuid]; exist && kv.ids[args.Uuid] >= args.Count {
-		// 说明是重复的请求
-		reply.Err = OK
-		DPrintf("repeat request")
-		kv.mu.Unlock()
-		return
-	}
-	kv.mu.Unlock()
+	// kv.mu.Lock()
+	// if _, exist := kv.ids[args.Uuid]; exist && kv.ids[args.Uuid] >= args.Count {
+	// 	// 说明是重复的请求
+	// 	reply.Err = OK
+	// 	DPrintf("repeat request")
+	// 	kv.mu.Unlock()
+	// 	return
+	// }
+	// kv.mu.Unlock()
 
 	//index, _, isLeader := kv.rf.Start(op)
 	index, term, isLeader := kv.rf.Start(op)
@@ -272,15 +273,16 @@ func (kv *ShardKV) HandoutShards(args *HandoutShardsArgs, reply *HandoutShardsRe
 		return 
 	}
 
-	DPrintf("%v(%v) got a handout_shards(shard %v) request from group %v", kv.me, kv.gid, args.Shard, args.Gid)
-
 	op := Op {
 		Type: HANDOUTSHARDS,
 		Conf: args.Config,
 		Kvs: args.Kvs,
 		Shard: args.Shard,
 		HandoutErr: args.Err,
+		Ids: args.Ids,
 	}
+	DPrintf("%v(%v) got a handout_shards(shard %v) request from group %v, ids cnt2 %v cnt3 %v", kv.me, kv.gid, args.Shard, args.Gid,
+			len(args.Ids), len(op.Ids))
 
 	_, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
@@ -381,6 +383,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		kv.ids = make(map[int64]int)
 		kv.lastApplied = 0
 	}
+	DPrintf("%v(%v) (re)start", kv.me, kv.gid)
+
 	kv.mu.Unlock()
 	//kv.records = make(map[int]OpMsg)
 	kv.replyChs = make(map[int]chan OpReply)

@@ -2,7 +2,7 @@
  * @Author: greenhandzpx 893522573@qq.com
  * @Date: 2023-01-09 14:38:42
  * @LastEditors: greenhandzpx 893522573@qq.com
- * @LastEditTime: 2023-01-09 22:46:54
+ * @LastEditTime: 2023-01-12 15:12:00
  * @FilePath: /src/shardkv/common.go
  * @Description:
  *
@@ -81,6 +81,7 @@ type HandoutShardsArgs struct {
 	Gid int
 	Kvs map[string]string
 	Config shardctrler.Config
+	Ids map[int64]int
 }
 
 type HandoutShardsReply struct {

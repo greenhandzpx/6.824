@@ -28,6 +28,7 @@ func (kv *ShardKV) handleGetReq(op Op, commandIndex int) {
 		kv.lastApplied = commandIndex
 		//kv.lastApplied++
 		DPrintf("%v(%v) get req error wrong group, idx:%v because of migrating, pending config num %v", kv.me, kv.gid, commandIndex, kv.pendingConfig.Num)
+		kv.lastApplied = commandIndex
 		kv.sendReply(commandIndex, &reply)
 		return
 	}
@@ -36,6 +37,7 @@ func (kv *ShardKV) handleGetReq(op Op, commandIndex int) {
 		// this shard isn't controlled by this server
 		reply.Err = ErrWrongGroup
 		DPrintf("%v(%v) get req error wrong group, idx:%v", kv.me, kv.gid, commandIndex)
+		kv.lastApplied = commandIndex
 		kv.sendReply(commandIndex, &reply)
 		return
 	}
@@ -70,12 +72,23 @@ func (kv *ShardKV) handleAppendReq(op Op, commandIndex int) {
 		return
 	}
 
+	if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
+		DPrintf("count %v already exists", op.Count)
+		reply.Err = OK
+		kv.lastApplied = commandIndex
+		//kv.lastApplied++
+		kv.sendReply(commandIndex, &reply)
+		return 
+	}
+
 	if kv.migrating {
 		// the server is migrating, should not accept any requests
 		reply.Err = ErrWrongGroup
 		kv.lastApplied = commandIndex
 		//kv.lastApplied++
-		DPrintf("%v(%v) append req error wrong group, idx:%v because of migrating, pending config num %v", kv.me, kv.gid, commandIndex, kv.pendingConfig.Num)
+		DPrintf("%v(%v) append req error wrong group, idx:%v k:%v v:%v because of migrating, pending config num %v", 
+			kv.me, kv.gid, commandIndex, op.Key, op.Value, kv.pendingConfig.Num)
+		kv.lastApplied = commandIndex
 		kv.sendReply(commandIndex, &reply)
 		return
 	}
@@ -83,28 +96,31 @@ func (kv *ShardKV) handleAppendReq(op Op, commandIndex int) {
 	if kv.config.Shards[key2shard(op.Key)] != kv.gid {
 		// this shard isn't controlled by this server
 		reply.Err = ErrWrongGroup
-		DPrintf("%v(%v) append req error wrong group, idx:%v", kv.me, kv.gid, commandIndex)
+		DPrintf("%v(%v) append req error wrong group, idx:%v k:%v v:%v bec", kv.me, kv.gid, commandIndex, op.Key, op.Value)
+		kv.lastApplied = commandIndex
 		kv.sendReply(commandIndex, &reply)
 		return
 	}
 
-	if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
-		DPrintf("count %v already exists", op.Count)
+
+	// if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
+	// 	DPrintf("count %v already exists", op.Count)
+	// 	reply.Err = OK
+	// } else {
+	kv.ids[op.Uuid] = op.Count
+
+	_, ok := kv.kvs[op.Key]
+	if ok {
 		reply.Err = OK
+		kv.kvs[op.Key] += op.Value
+		DPrintf("(idx:%v)%v(%v) append key:%v value:%v config num %v", commandIndex, kv.me, kv.gid, op.Key, op.Value, kv.config.Num)
+		DPrintf("%v(%v) now k:%v, v:%v", kv.me, kv.gid, op.Key, kv.kvs[op.Key])
 	} else {
-		kv.ids[op.Uuid] = op.Count
-		_, ok := kv.kvs[op.Key]
-		if ok {
-			reply.Err = OK
-			kv.kvs[op.Key] += op.Value
-			DPrintf("(idx:%v)%v(%v) append key:%v value:%v config num %v", commandIndex, kv.me, kv.gid, op.Key, op.Value, kv.config.Num)
-			DPrintf("%v(%v) now k:%v, v:%v", kv.me, kv.gid, op.Key, kv.kvs[op.Key])
-		} else {
-			reply.Err = ErrNoKey
-			kv.kvs[op.Key] = op.Value
-			DPrintf("%v(%v) put(append) key:%v value:%v", kv.me, kv.gid, op.Key, op.Value)
-		}
+		reply.Err = ErrNoKey
+		kv.kvs[op.Key] = op.Value
+		DPrintf("%v(%v) put(append) key:%v value:%v", kv.me, kv.gid, op.Key, op.Value)
 	}
+	// }
 
 	kv.lastApplied = commandIndex
 	//kv.lastApplied++
@@ -125,12 +141,21 @@ func (kv *ShardKV) handlePutReq(op Op, commandIndex int) {
 		return
 	}
 
+	if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
+		DPrintf("count %v already exists", op.Count)
+		kv.lastApplied = commandIndex
+		//kv.lastApplied++
+		kv.sendReply(commandIndex, &reply)
+		return
+	}
+
 	if kv.migrating {
 		// the server is migrating, should not accept any requests
 		reply.Err = ErrWrongGroup
 		kv.lastApplied = commandIndex
 		//kv.lastApplied++
 		DPrintf("%v(%v) put req error wrong group, idx:%v because of migrating, pending config num %v", kv.me, kv.gid, commandIndex, kv.pendingConfig.Num)
+		kv.lastApplied = commandIndex
 		kv.sendReply(commandIndex, &reply)
 		return
 	}
@@ -139,23 +164,19 @@ func (kv *ShardKV) handlePutReq(op Op, commandIndex int) {
 		// this shard isn't controlled by this server
 		reply.Err = ErrWrongGroup
 		DPrintf("%v(%v) put req error wrong group, idx:%v", kv.me, kv.gid, commandIndex)
+		kv.lastApplied = commandIndex
 		kv.sendReply(commandIndex, &reply)
 		return
 	}
-	//if _, ok := kv.shards[key2shard(op.Key)]; !ok {
-	//	// The config changed, and this shard isn't controlled by this server
-	//	reply.Err = ErrWrongGroup
-	//	return
-	//}
 
-	if _, exists := kv.ids[op.Uuid]; exists && kv.ids[op.Uuid] >= op.Count {
-		DPrintf("count %v already exists", op.Count)
-	} else {
-		kv.ids[op.Uuid] = op.Count
-		DPrintf("(idx:%v)%v(%v) put key:%v value:%v config num %v", commandIndex, kv.me, kv.gid, op.Key, op.Value, kv.config.Num)
-		kv.ids[op.Uuid] = op.Count
-		kv.kvs[op.Key] = op.Value
-	}
+
+	kv.ids[op.Uuid] = op.Count
+
+
+	DPrintf("(idx:%v)%v(%v) put key:%v value:%v config num %v", commandIndex, kv.me, kv.gid, op.Key, op.Value, kv.config.Num)
+	kv.ids[op.Uuid] = op.Count
+	kv.kvs[op.Key] = op.Value
+	// }
 	kv.lastApplied = commandIndex
 	//kv.lastApplied++
 	kv.sendReply(commandIndex, &reply)
@@ -367,8 +388,13 @@ func (kv *ShardKV) handleGetShards(op Op, commandIndex int) {
 					cnt++
 				}
 			}
-			DPrintf("%v(%v) send handout shard %v to group %v, kv cnt %v", kv.me, kv.gid, op.Shard, 
-					op.Conf.Shards[op.Shard], cnt)	
+			// also need to transfer the client uuids
+			handoutArgs.Ids = make(map[int64]int)
+			for id, cnt := range kv.ids {
+				handoutArgs.Ids[id] = cnt
+			}
+			DPrintf("%v(%v) send handout shard %v to group %v, kv cnt %v ids cnt %v", kv.me, kv.gid, op.Shard, 
+					op.Conf.Shards[op.Shard], cnt, len(handoutArgs.Ids))	
 		}
 	}
 
@@ -427,7 +453,7 @@ func (kv *ShardKV) handleHandoutShards(op Op, commandIndex int) {
 		return
 	}
 
-	DPrintf("%v(%v) handle handout shards, shard %v conf num %v", kv.me, kv.gid, op.Shard, op.Conf.Num)
+	DPrintf("%v(%v) handle handout shards, shard %v conf num %v ids size %v", kv.me, kv.gid, op.Shard, op.Conf.Num, len(op.Ids))
 
 	if op.HandoutErr == ErrRetry {	
 		// ErrRetry means the src group is updating its config and we need to 
@@ -466,6 +492,16 @@ func (kv *ShardKV) handleHandoutShards(op Op, commandIndex int) {
 	// add these kvs to the kv database
 	for k, v := range op.Kvs {
 		kv.kvs[k] = v
+	}
+	// add ids to the kv ids
+	for id, cnt := range op.Ids {
+		if _, exists := kv.ids[id]; exists {
+			if kv.ids[id] < cnt {
+				kv.ids[id] = cnt
+			}
+		} else {
+			kv.ids[id] = cnt
+		} 
 	}
 	kv.shardVersions[op.Shard] = op.Conf.Num
 
