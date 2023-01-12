@@ -12,7 +12,8 @@ import "6.824/labrpc"
 import "sync"
 import "6.824/labgob"
 
-const Debug = true
+const Debug = false
+// const Debug = true
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -121,12 +122,14 @@ func (sc *ShardCtrler) handleJoin(op Op, commandIndex int) {
 	if _, exists := sc.ids[op.Uuid]; exists && sc.ids[op.Uuid] >= op.Count {
 		DPrintf("count %v already exists", op.Count)
 	} else {
+		sc.ids[op.Uuid] = op.Count
 		oldConfig := sc.configs[len(sc.configs)-1]
 		newConfig := Config{
 			Num:    oldConfig.Num + 1,
 			Groups: make(map[int][]string),
 			//Shards: [NShards]int,
 		}
+		DPrintf("%v handle join req, old conf %v", sc.me, oldConfig.Num)
 		// copy the newly added groups
 		for k, v := range op.Servers {
 			newConfig.Groups[k] = v
@@ -259,6 +262,8 @@ func (sc *ShardCtrler) handleLeave(op Op, commandIndex int) {
 		DPrintf("count %v already exists", op.Count)
 
 	} else {
+
+		sc.ids[op.Uuid] = op.Count
 
 		oldConfig := sc.configs[len(sc.configs)-1]
 		newConfig := Config{
@@ -402,6 +407,8 @@ func (sc *ShardCtrler) handleMove(op Op, commandIndex int) {
 		DPrintf("count %v already exists", op.Count)
 
 	} else {
+		sc.ids[op.Uuid] = op.Count
+
 		oldConfig := sc.configs[len(sc.configs)-1]
 		newConfig := Config{
 			Num:    oldConfig.Num + 1,
@@ -443,8 +450,8 @@ func (sc *ShardCtrler) handleQuery(op Op, commandIndex int) {
 
 	if op.Num < 0 || op.Num >= len(sc.configs) {
 		reply.Conf = sc.configs[len(sc.configs)-1]
-		DPrintf("%v got an invalid num query, newest group size:%v",
-			sc.me, len(reply.Conf.Groups))
+		DPrintf("%v got an invalid num query, newest config num %v",
+			sc.me, sc.configs[len(sc.configs)-1].Num)
 	} else {
 		reply.Conf = sc.configs[op.Num]
 	}
@@ -454,7 +461,7 @@ func (sc *ShardCtrler) handleQuery(op Op, commandIndex int) {
 }
 
 func (sc *ShardCtrler) checkCh() {
-	for sc.killed() == false {
+	for !sc.killed() {
 		commandMsg := <-sc.applyCh
 		if commandMsg.CommandValid {
 			// get a request from client(through raft)
